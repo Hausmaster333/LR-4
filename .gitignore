@@ -1,6 +1,11 @@
+program
+hanoi.html
+.vscode
+googletest/
 # Prerequisites
 *.d
-
+*.ini
+*.mp4
 # Compiled Object files
 *.slo
 *.lo
