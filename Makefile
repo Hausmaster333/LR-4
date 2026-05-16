@@ -31,8 +31,8 @@ program: src/main.cpp src/menu.cpp src/bit_sequence.cpp
 	$(CC) $(CFLAGS) src/main.cpp src/menu.cpp src/bit_sequence.cpp -o program
 
 # GUI версия с ImGui+ImPlot
-gui: src/gui_main.cpp $(IMGUI_SRC) $(IMPLOT_SRC) 
-	$(CC) $(CFLAGS) $(GUI_FLAGS) src/gui_main.cpp src/bit_sequence.cpp src/sorting_station.cpp $(IMGUI_SRC) $(IMPLOT_SRC) $(GUI_LIBS) -o gui
+gui: src/gui_main.cpp $(IMGUI_SRC) $(IMPLOT_SRC)
+	$(CC) $(CFLAGS) $(GUI_FLAGS) src/gui_main.cpp $(IMGUI_SRC) $(IMPLOT_SRC) $(GUI_LIBS) -o gui
 
 seq_tests: tests/tests.cpp $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc
 	$(CC) $(CFLAGS) $(GTEST_FLAGS) tests/tests.cpp src/bit_sequence.cpp $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc -o seq_tests
@@ -47,5 +47,11 @@ deq_tests_leak: tests/deque_tests.cpp $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)
 lazy_tests: tests/lazy_tests.cpp $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc
 	$(CC) $(CFLAGS) $(GTEST_FLAGS) tests/lazy_tests.cpp $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc -o lazy_tests
 
+stream_tests: tests/stream_tests.cpp $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc
+	$(CC) $(CFLAGS) $(GTEST_FLAGS) tests/stream_tests.cpp $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc -o stream_tests
+
+memory_tape_tests: tests/memory_tape_tests.cpp $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc
+	$(CC) $(CFLAGS) $(GTEST_FLAGS) tests/memory_tape_tests.cpp $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc -o memory_tape_tests
+
 clean:
-	rm *.o program seq_tests 
+	rm *.o program seq_tests stream_tests memory_tape_tests

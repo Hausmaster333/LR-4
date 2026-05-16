@@ -1,7 +1,6 @@
 #ifndef CARDINAL_H
 #define CARDINAL_H
 
-#include <cstddef>
 #include <stdexcept>
 
 class Cardinal { // Нужен для определения длины ленивой последовательности
@@ -14,7 +13,7 @@ class Cardinal { // Нужен для определения длины лени
         static Cardinal finite(size_t finite_length) { return Cardinal(false, finite_length); } // Задаем длину
         static Cardinal infinity() { return Cardinal(true, 0); } // static для того, чтобы это была функция класса, которая создает объект этого класса
         // + чтобы не делать публичный метод со странным вызовом и запретить неправильные состояния
-        static Cardinal zero() { return Cardinal(false, 0); } // удобный синоним finite(0)
+        static Cardinal zero() { return Cardinal(false, 0); } // обертка над finite(0)
 
         bool is_infinite() const { return infinite; }
         bool is_finite() const { return !infinite; }
@@ -35,38 +34,25 @@ class Cardinal { // Нужен для определения длины лени
             return !(*this == other);
         }
 
-        // Сложение: бесконечное + что-угодно = бесконечное
-        Cardinal operator+(const Cardinal& other) const {
+        Cardinal operator+(const Cardinal& other) const { // Беск + конечн = беск
             if (infinite || other.infinite) return Cardinal::infinity();
 
             return Cardinal::finite(finite_length + other.finite_length);
         }
 
-        // Вычитание:
-        //   inf - finite = inf
-        //   inf - inf    = неопределённость (logic_error)
-        //   finite - inf = отрицательное (logic_error)
-        //   finite - finite: если уменьшаемое < вычитаемого → logic_error
         Cardinal operator-(const Cardinal& other) const {
-            if (infinite && other.infinite) {
-                throw std::logic_error("infinity - infinity is undefined");
-            }
+            if (infinite && other.infinite) throw std::logic_error("infinity - infinity is undefined"); // inf - inf даст неопределённость (logic_error)
 
-            if (infinite) return Cardinal::infinity();
+            if (infinite) return Cardinal::infinity(); // inf - finite даст inf
 
-            if (other.infinite) {
-                throw std::logic_error("finite - infinity would be negative");
-            }
+            if (other.infinite) throw std::logic_error("finite - infinity would be negative"); // finite - inf даст отрицательное
             
-            if (finite_length < other.finite_length) {
-                throw std::logic_error("Cardinal subtraction underflow");
-            }
+            if (finite_length < other.finite_length) throw std::logic_error("Cardinal subtraction underflow");
 
             return Cardinal::finite(finite_length - other.finite_length);
         }
 
-        // Сравнения. Бесконечное больше любого конечного и равно само себе.
-        bool operator<(const Cardinal& other) const {
+        bool operator<(const Cardinal& other) const { // Бесконечное больше любого конечного и равно само себе
             if (infinite) return false;             // inf < x всегда ложь
             if (other.infinite) return true;        // finite < inf всегда истина
 

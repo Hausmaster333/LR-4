@@ -1,195 +1,226 @@
 #ifndef GENERATOR_H
 #define GENERATOR_H
 
-#include <functional>
-#include <cstddef>
 #include "core/sequence.h"
-#include "core/option.h"
+#include "core/ienumerator.h"
 #include "lazy/cardinal.h"
+#include <functional>
 
-// Forward declaration: Generator хранит указатель на хозяина, полный тип не нужен
-template <class T> class LazySequence;
-
-// Базовый абстрактный генератор. Один экземпляр на каждый LazySequence,
-// недоступен извне, инкапсулирует правило порождения очередного элемента.
 template <class T>
-class Generator {
-    protected:
-        LazySequence<T>* owner; // не владеем — хозяин владеет генератором
-        size_t position;        // сколько элементов уже выдали
-
-        // Прокси к приватному API хозяина. Технически необходимы:
-        // friendship НЕ наследуется. LazySequence объявил friend для базы
-        // Generator<T>, и этот доступ есть только у методов САМОЙ базы.
-        // Методы подклассов (RecurrenceGenerator::get_next и т.п.) friend-а
-        // не наследуют — без прокси они не могут вызвать owner->cache_push
-        // напрямую. Прокси определены в базе → имеют friend-доступ → подклассы
-        // вызывают унаследованный protected-метод и через него попадают в кэш.
-        // Реализация — в .tpp, нужен полный тип LazySequence.
-        void cache_push(const T& item);
-        const T& cache_at(size_t i) const;
-        size_t cache_size() const;
-        void set_length(Cardinal c);
-        Cardinal length_hint() const;
-
-        // LazySequence привязывает к себе «недопривязанный» генератор
-        // (тот, что вернули append/insert/remove с owner == nullptr).
-        void set_owner(LazySequence<T>* o) { owner = o; }
-        friend class LazySequence<T>;
+class Generator { // Выдает элементы по запросу и всё
     public:
-        Generator(LazySequence<T>* owner);
+        // Индекс следующего элемента, который выдаст get_next(). Растёт монотонно,
+        // начальное значение 0. Используется LazySequence для синхронизации с кэшем
+        virtual size_t position() const = 0;
+        virtual bool has_next() const = 0; // Проверка, если ли остаток, для бесконечных очевидно всегда true
+
+        virtual T get_next() = 0; // Продвинуться на 1 + вернуть значение
+        virtual Option<T> try_get_next() = 0;
+
+        virtual Cardinal estimate_remaining() const { return Cardinal::infinity(); } // Оценка остатка (для финитных) и infinity() если поток бесконечен или мы не знаем точно
+
+        virtual Generator<T>* clone() const = 0; // Копия генератора с pos = 0, используется в derive-операциях, строится от всей исходной посл-сти, не от текущей pos
+
         virtual ~Generator() = default;
-
-        virtual bool has_next() const = 0;
-        virtual T get_next() = 0;                 // может бросить IndexOutOfRange (конец)
-        virtual Option<T> try_get_next() = 0;     // безопасный аналог
-
-        // Операции из ТЗ. Возвращают новый Generator с owner == nullptr;
-        // привязка к новому хозяину делается LazySequence-конструктором,
-        // который принимает Generator* и Cardinal.
-        // (В ТЗ index у Insert/Remove не указан — трактуем как опечатку,
-        // т.к. иначе нет симметрии с конструктором Generator(..., index, ...).
-        // Append — частный случай Insert при index == length.)
-        virtual Generator<T>* append(const T& item) const;
-        virtual Generator<T>* append(const Sequence<T>* items) const;
-
-        virtual Generator<T>* insert(const T& item, size_t index) const;
-        virtual Generator<T>* insert(const Sequence<T>* items, size_t index) const;
-
-        virtual Generator<T>* remove(size_t index) const;
-        virtual Generator<T>* remove(size_t index, size_t count) const;
 };
 
-// Рекуррентное правило: f(последние k элементов) -> очередной элемент.
-// Использует MutableArraySequence как «окно» из k последних значений
-// (по сути кольцевой буфер фиксированной длины k).
+// Рекуррентное правило f(окно последних k) -> next
+// На первом этапе выдаёт начальные элементы и заполняет окно, а дальше применяет к нему правило и сдвигает его влево
 template <class T>
 class RecurrenceGenerator : public Generator<T> {
     private:
         std::function<T(Sequence<T>*)> rule;
-        size_t k;                              // длина окна
-        MutableArraySequence<T> initial;       // копия начальных элементов
-        MutableArraySequence<T> window;        // окно последних k элементов
-    public:
-        RecurrenceGenerator(LazySequence<T>* owner,
-                            std::function<T(Sequence<T>*)> rule,
-                            const Sequence<T>* initial);
+        size_t k; // Размер окна = число элементов в initial
+        MutableArraySequence<T> initial; // Копия начальных элементов (для clone)
+        MutableArraySequence<T> window; // Текущее окно из k последних значений
 
-        bool has_next() const override;
+        size_t pos;
+    public:
+        RecurrenceGenerator(std::function<T(Sequence<T>*)> rule, const Sequence<T>* initial);
+
+        size_t position() const override { return pos; }
+        bool has_next() const override { return true; }
+
         T get_next() override;
-        Option<T> try_get_next() override;
+        Option<T> try_get_next() override { return Option<T>::Some(get_next()); }
+
+        Cardinal estimate_remaining() const override { return Cardinal::infinity(); }
+
+        Generator<T>* clone() const override;
 };
-// Обёртка над готовой Sequence<T>* — превращает «жадную» последовательность
-// в ленивую (читаем по одному элементу в кэш по запросу).
-// Источником НЕ владеем: ответственность вызывающего держать его живым.
+
+// SourceGenerator превращает любой готовый Sequence (массив, list и тд) в Generator, чтобы LazySequence могла работать с ним через свой единый интерфейс
 template <class T>
 class SourceGenerator : public Generator<T> {
     private:
-        const Sequence<T>* source; // не владеем
-    public:
-        SourceGenerator(LazySequence<T>* owner, const Sequence<T>* source);
+        Sequence<T>* owned; // Исходная
+        IEnumerator<T>* iterator; // Продвигается по owned
+        size_t pos; // Сколько уже выдано(индекс следующего элемента, который выдаст get_next)
+        size_t total; // Сколько элементов в owned
 
-        bool has_next() const override;
+        static Sequence<T>* copy_of(const Sequence<T>* source); // Глубокая копия в новый MutableArray
+
+        SourceGenerator() : owned(nullptr), iterator(nullptr), pos(0), total(0) {} // Используется только из own
+    public:
+        SourceGenerator(const Sequence<T>* source); // Создаёт независимую копию source внутри
+
+        static SourceGenerator<T>* own(Sequence<T>* source); // Фабрика, которая создаёт SourceGenerator БЕЗ копирования source. Вызывающий передаёт уже готовый буфер, забирает его без копирования
+
+        size_t position() const override { return pos; }
+        bool has_next() const override { return pos < total; }
+
         T get_next() override;
         Option<T> try_get_next() override;
+
+        Cardinal estimate_remaining() const override;
+
+        Generator<T>* clone() const override;
+
+        ~SourceGenerator() override;
 };
 
-// Точечная модификация существующей LazySequence: вставка/удаление одного
-// элемента или подпоследовательности в позиции index.
 template <class T>
-class ModifyingGenerator : public Generator<T> {
-    public:
-        enum class Kind { Insert, Remove };
+class PrependGenerator : public Generator<T> { // Копия генератора оригинальной LazySequence
     private:
-        LazySequence<T>* base;       // не владеем
-        size_t index;                // позиция модификации в base
-        Sequence<T>* delta;          // владеем (что вставляем/что удаляем по форме)
-        Kind kind;
+        T head_item;
+        Generator<T>* upstream; // Основной генератор
+        size_t pos;
     public:
-        ModifyingGenerator(LazySequence<T>* owner,
-                           LazySequence<T>* base,
-                           size_t index,
-                           Sequence<T>* delta,
-                           Kind kind);
-        ~ModifyingGenerator() override;
+        PrependGenerator(const T& item, Generator<T>* upstream); // Prepend хранит head_item и upstream. При обращении к нулевому элементу отдаёт head_item, дальше просто проксирует к upstream
 
+        size_t position() const override { return pos; }
         bool has_next() const override;
+
         T get_next() override;
         Option<T> try_get_next() override;
+
+        Cardinal estimate_remaining() const override;
+
+        Generator<T>* clone() const override;
+
+        ~PrependGenerator() override;        
 };
 
-// Сцепление двух LazySequence. Если левый бесконечен — правый недостижим.
-template <class T>
-class ConcatGenerator : public Generator<T> {
-    private:
-        LazySequence<T>* left;       // не владеем
-        LazySequence<T>* right;      // не владеем
-    public:
-        ConcatGenerator(LazySequence<T>* owner,
-                        LazySequence<T>* left,
-                        LazySequence<T>* right);
-
-        bool has_next() const override;
-        T get_next() override;
-        Option<T> try_get_next() override;
-};
-
-// Map: входной тип U, выходной T. База — Generator<T>.
+// MapGenerator<U, T> - применяет f к каждому элементу upstream<U>, выдаёт T
+// Обращается к исходному генератору и применяем к полученному значению функцию и возвращает новое значение
 template <class U, class T>
 class MapGenerator : public Generator<T> {
     private:
-        LazySequence<U>* source;     // не владеем
-        std::function<T(const U&)> f;
+        Generator<U>* upstream; // Исходный генератор
+        std::function<T(const U&)> func;
+        size_t pos;
     public:
-        MapGenerator(LazySequence<T>* owner,
-                     LazySequence<U>* source,
-                     std::function<T(const U&)> f);
+        MapGenerator(Generator<U>* upstream, std::function<T(const U&)> func);
 
-        bool has_next() const override;
+        size_t position() const override { return pos; }
+        bool has_next() const override { return upstream->has_next(); }
+
         T get_next() override;
         Option<T> try_get_next() override;
+
+        Cardinal estimate_remaining() const override { return upstream->estimate_remaining(); }
+
+        Generator<T>* clone() const override;
+
+        ~MapGenerator() override;
 };
 
-// Where: фильтр. Позиция в источнике расходится с позицией результата,
-// поэтому отдельное поле source_position.
+// WhereGenerator фильтрует upstream через pred
+// has_next возвращает upstream->has_next
+// если на бесконечной pred никогда не срабатывает, то get_nextзависнет
 template <class T>
 class WhereGenerator : public Generator<T> {
     private:
-        LazySequence<T>* source;          // не владеем
+        Generator<T>* upstream;
         std::function<bool(const T&)> pred;
-        size_t source_position;
+        size_t pos;
     public:
-        WhereGenerator(LazySequence<T>* owner,
-                       LazySequence<T>* source,
-                       std::function<bool(const T&)> pred);
+        WhereGenerator(Generator<T>* upstream, std::function<bool(const T&)> pred);
 
-        bool has_next() const override;
+        size_t position() const override { return pos; }
+        bool has_next() const override { return upstream->has_next(); }
+
         T get_next() override;
         Option<T> try_get_next() override;
+
+        Cardinal estimate_remaining() const override { return upstream->estimate_remaining(); }
+        Generator<T>* clone() const override;
+
+        ~WhereGenerator() override;        
 };
 
-// Zip: пара двух LazySequence (типы U и V) в один тип T через combiner.
+// ZipGenerator<U, V, T> - попарная композиция через combiner
+// Конечен если хоть один из upstream-ов конечен
 template <class U, class V, class T>
 class ZipGenerator : public Generator<T> {
     private:
-        LazySequence<U>* a;          // не владеем
-        LazySequence<V>* b;          // не владеем
+        Generator<U>* first;
+        Generator<V>* second;
         std::function<T(const U&, const V&)> combiner;
+        size_t pos;
     public:
-        ZipGenerator(LazySequence<T>* owner,
-                     LazySequence<U>* a,
-                     LazySequence<V>* b,
-                     std::function<T(const U&, const V&)> combiner);
+        ZipGenerator(Generator<U>* first, Generator<V>* second, std::function<T(const U&, const V&)> combiner);
 
-        bool has_next() const override;
+        size_t position() const override { return pos; }
+        bool has_next() const override { return first->has_next() && second->has_next(); }
+
         T get_next() override;
         Option<T> try_get_next() override;
+
+        Cardinal estimate_remaining() const override;
+        Generator<T>* clone() const override;
+
+        ~ZipGenerator() override;        
 };
 
-// Страховка: если кто-то включил generator.h напрямую, мы тянем lazy_sequence.h,
-// чтобы в generator.tpp был полный тип LazySequence. include guards защищают
-// от бесконечной рекурсии (см. lazy_sequence.h, который тоже подключает обратно).
-#include "lazy/lazy_sequence.h"
+// ConcatGenerator<T> - сначала отдаёт всё из left (длина left_length должна быть финитной), потом всё из right. Владеет обоими upstream-ами
+template <class T>
+class ConcatGenerator : public Generator<T> {
+    private:
+        Generator<T>* left;
+        Cardinal left_length;
+        Generator<T>* right;
+        size_t pos;
+    public:
+        ConcatGenerator(Generator<T>* left, Cardinal left_length, Generator<T>* right);
+
+        size_t position() const override { return pos; }
+        bool has_next() const override;
+
+        T get_next() override;
+        Option<T> try_get_next() override;
+
+        Cardinal estimate_remaining() const override;
+
+        Generator<T>* clone() const override;
+
+        ~ConcatGenerator() override;        
+};
+
+// InsertAtGenerator<T> - выдаёт upstream до inject_position, затем inject_item один раз, затем продолжает upstream
+template <class T>
+class InsertAtGenerator : public Generator<T> {
+    private:
+        size_t inject_position;
+        T inject_item;
+        Generator<T>* upstream;
+        size_t pos;
+    public:
+        InsertAtGenerator(size_t inject_position, const T& item, Generator<T>* upstream);
+
+        size_t position() const override { return pos; }
+        bool has_next() const override;
+
+        T get_next() override;
+        Option<T> try_get_next() override;
+
+        Cardinal estimate_remaining() const override;
+
+        Generator<T>* clone() const override;
+
+        ~InsertAtGenerator() override;        
+};
+
 #include "generator.tpp"
 
 #endif

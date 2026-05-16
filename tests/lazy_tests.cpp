@@ -1,6 +1,113 @@
-#include "lazy/cardinal.h"
 #include "lazy/lazy_sequence.h"
+#include "lazy/sliding_cache.h"
 #include <gtest/gtest.h>
+
+// ================ SlidingCache tests
+
+TEST(SlidingCacheTest, ZeroCapacityThrows) {
+    EXPECT_THROW(SlidingCache<int>(0), std::invalid_argument);
+}
+
+TEST(SlidingCacheTest, EmptyAfterConstruction) {
+    SlidingCache<int> c(4);
+
+    EXPECT_TRUE(c.is_empty());
+    EXPECT_EQ(c.get_count(), 0);
+    EXPECT_EQ(c.get_capacity(), 4);
+    EXPECT_THROW(c.get_first_index(), std::logic_error);
+    EXPECT_THROW(c.get_last_index(), std::logic_error);
+    EXPECT_FALSE(c.contains(0));
+}
+
+TEST(SlidingCacheTest, PushFillsWindow) {
+    SlidingCache<int> c(4);
+
+    c.push(10);
+    c.push(20);
+    c.push(30);
+
+    EXPECT_FALSE(c.is_empty());
+    EXPECT_EQ(c.get_count(), 3);
+    EXPECT_EQ(c.get_first_index(), 0u);
+    EXPECT_EQ(c.get_last_index(), 2u);
+    EXPECT_EQ(c.get(0), 10);
+    EXPECT_EQ(c.get(1), 20);
+    EXPECT_EQ(c.get(2), 30);
+    EXPECT_TRUE(c.contains(0));
+    EXPECT_TRUE(c.contains(2));
+    EXPECT_FALSE(c.contains(3));
+}
+
+TEST(SlidingCacheTest, PushExactlyCapacity) {
+    SlidingCache<int> c(3);
+    c.push(1); c.push(2); c.push(3);
+
+    EXPECT_EQ(c.get_count(), 3);
+    EXPECT_EQ(c.get_first_index(), 0u);
+    EXPECT_EQ(c.get_last_index(), 2u);
+    EXPECT_EQ(c.get(0), 1);
+    EXPECT_EQ(c.get(2), 3);
+}
+
+TEST(SlidingCacheTest, EvictsOldestWhenOverflow) {
+    SlidingCache<int> c(3);
+    // push 0-5 и должно остаться окно [3, 4, 5]
+    for (int i = 0; i < 6; ++i) c.push(i * 10);
+
+    EXPECT_EQ(c.get_count(), 3);
+    EXPECT_EQ(c.get_first_index(), 3u);
+    EXPECT_EQ(c.get_last_index(), 5u);
+    EXPECT_EQ(c.get(3), 30);
+    EXPECT_EQ(c.get(4), 40);
+    EXPECT_EQ(c.get(5), 50);
+}
+
+TEST(SlidingCacheTest, AtThrowsOnEvictedIndex) {
+    SlidingCache<int> c(2);
+    c.push(1); c.push(2); c.push(3);  // окно [1, 2]
+
+    EXPECT_THROW(c.get(0), std::out_of_range);   // вытеснен
+    EXPECT_FALSE(c.contains(0));
+    EXPECT_TRUE(c.contains(1));
+    EXPECT_TRUE(c.contains(2));
+}
+
+TEST(SlidingCacheTest, AtThrowsOnFutureIndex) {
+    SlidingCache<int> c(4);
+    c.push(1); c.push(2);
+
+    EXPECT_THROW(c.get(2), std::out_of_range);
+    EXPECT_THROW(c.get(100), std::out_of_range);
+}
+
+TEST(SlidingCacheTest, ClearResetsState) {
+    SlidingCache<int> c(3);
+    c.push(1); c.push(2);
+
+    c.clear();
+
+    EXPECT_TRUE(c.is_empty());
+    EXPECT_EQ(c.get_count(), 0);
+    EXPECT_THROW(c.get(0), std::out_of_range);
+
+    // после clear можно начинать заново с индекса 0
+    c.push(99);
+    EXPECT_EQ(c.get_first_index(), 0u);
+    EXPECT_EQ(c.get_last_index(), 0u);
+    EXPECT_EQ(c.get(0), 99);
+}
+
+TEST(SlidingCacheTest, RingWrapsCorrectly) {
+    SlidingCache<int> c(3);
+    // Заполняем 0-9, окно постоянно сдвигается через границу физического кольца
+    for (int i = 0; i < 10; ++i) c.push(i);
+
+    EXPECT_EQ(c.get_first_index(), 7u);
+    EXPECT_EQ(c.get_last_index(), 9u);
+    EXPECT_EQ(c.get(7), 7);
+    EXPECT_EQ(c.get(8), 8);
+    EXPECT_EQ(c.get(9), 9);
+}
 
 // ================ Cardinal tests
 
@@ -33,7 +140,7 @@ TEST(LazySequenceTest, EmptyConstructor) {
     LazySequence<int> seq;
 
     EXPECT_EQ(seq.get_length(), Cardinal::finite(0));
-    EXPECT_EQ(seq.get_materialized_count(), 0u);
+    EXPECT_EQ(seq.get_materialized_count(), 0);
 }
 
 TEST(LazySequenceTest, ArrayConstructor) {
@@ -42,7 +149,12 @@ TEST(LazySequenceTest, ArrayConstructor) {
     LazySequence<int> seq(items, 3);
 
     EXPECT_EQ(seq.get_length(), Cardinal::finite(3));
-    EXPECT_EQ(seq.get_materialized_count(), 3u);
+    // Крконструктор не материализует элементы сразу и кэш изначально пуст, материализация при get().
+    EXPECT_EQ(seq.get_materialized_count(), 0);
+
+    seq.get(2);
+
+    EXPECT_EQ(seq.get_materialized_count(), 3);
 }
 
 TEST(LazySequenceTest, SequenceConstructor) {
@@ -52,7 +164,11 @@ TEST(LazySequenceTest, SequenceConstructor) {
     LazySequence<int> seq(&source);
 
     EXPECT_EQ(seq.get_length(), Cardinal::finite(3));
-    EXPECT_EQ(seq.get_materialized_count(), 3u);
+    EXPECT_EQ(seq.get_materialized_count(), 0);
+
+    seq.get(2);
+
+    EXPECT_EQ(seq.get_materialized_count(), 3);
 }
 
 TEST(LazySequenceTest, GetFromArray) {
@@ -210,6 +326,425 @@ TEST(LazySequenceTest, GetSubSequenceFullRange) {
     EXPECT_EQ(result->get(2), 3);
 
     delete result;
+}
+
+TEST(LazySequenceTest, InfiniteFibonacci_Basic) {
+    int init[] = {0, 1};
+    MutableArraySequence<int> initial(init, 2);
+
+    auto fib_rule = [](Sequence<int>* w) -> int {
+        return w->get_first() + w->get_last();
+    };
+
+    LazySequence<int> fib(fib_rule, &initial, /*cache_capacity*/ 16);
+
+    EXPECT_TRUE(fib.get_length().is_infinite());
+    EXPECT_EQ(fib.get(0), 0);
+    EXPECT_EQ(fib.get(1), 1);
+    EXPECT_EQ(fib.get(2), 1);
+    EXPECT_EQ(fib.get(3), 2);
+    EXPECT_EQ(fib.get(4), 3);
+    EXPECT_EQ(fib.get(5), 5);
+    EXPECT_EQ(fib.get(9), 34);
+    EXPECT_EQ(fib.get(15), 610);
+}
+
+TEST(LazySequenceTest, InfiniteFibonacci_GetCountThrows) {
+    int init[] = {0, 1};
+    MutableArraySequence<int> initial(init, 2);
+
+    auto rule = [](Sequence<int>* w) -> int {
+        return w->get_first() + w->get_last();
+    };
+
+    LazySequence<int> fib(rule, &initial);
+
+    EXPECT_THROW(fib.get_count(), std::logic_error);
+    EXPECT_THROW(fib.get_last(), std::logic_error);
+    EXPECT_FALSE(fib.try_get_last().has_value());
+}
+
+TEST(LazySequenceTest, InfiniteFibonacci_GetFirstWorks) {
+    int init[] = {0, 1};
+    MutableArraySequence<int> initial(init, 2);
+
+    auto rule = [](Sequence<int>* w) -> int {
+        return w->get_first() + w->get_last();
+    };
+
+    LazySequence<int> fib(rule, &initial);
+
+    EXPECT_EQ(fib.get_first(), 0);
+    EXPECT_TRUE(fib.try_get_first().has_value());
+    EXPECT_EQ(fib.try_get_first().get_value(), 0);
+}
+
+TEST(LazySequenceTest, InfiniteFibonacci_EvictionAfterLargeIndex) {
+    int init[] = {0, 1};
+    MutableArraySequence<int> initial(init, 2);
+
+    auto rule = [](Sequence<int>* w) -> int {
+        return w->get_first() + w->get_last();
+    };
+
+    LazySequence<int> fib(rule, &initial, /*cache_capacity*/ 4);
+
+    EXPECT_EQ(fib.get(9), 34);                     // окно [6..9]
+    EXPECT_THROW(fib.get(0), std::out_of_range);   // 0 вытеснен
+    EXPECT_THROW(fib.get(5), std::out_of_range);   // 5 вытеснен
+    EXPECT_EQ(fib.get(8), 21);                     // 8 ещё в окне
+    EXPECT_EQ(fib.get(9), 34);
+}
+
+TEST(LazySequenceTest, AppendOnInfinite_TailHangs) {
+    int init[] = {0, 1};
+    MutableArraySequence<int> initial(init, 2);
+
+    auto rule = [](Sequence<int>* w) -> int {
+        return w->get_first() + w->get_last();
+    };
+
+    LazySequence<int> fib(rule, &initial);
+
+    // append на бесконечной — отложенная операция, длина остаётся бесконечной
+    LazySequence<int>* fib_plus = fib.append(999);
+    EXPECT_TRUE(fib_plus->get_length().is_infinite());
+
+    // base работает как раньше
+    EXPECT_EQ(fib_plus->get(0), 0);
+    EXPECT_EQ(fib_plus->get(9), 34);
+
+    delete fib_plus;
+}
+
+TEST(LazySequenceTest, TakeAfterAppendOnInfinite_TailApplied) {
+    int init[] = {0, 1};
+    MutableArraySequence<int> initial(init, 2);
+
+    auto rule = [](Sequence<int>* w) -> int {
+        return w->get_first() + w->get_last();
+    };
+
+    LazySequence<int> fib(rule, &initial);
+
+    // Разделяем шаги, чтобы корректно освободить промежуточный объект.
+    LazySequence<int>* once = fib.append(999);
+    LazySequence<int>* extended = once->append(1000);
+    delete once;
+    // длина всё ещё бесконечная
+    EXPECT_TRUE(extended->get_length().is_infinite());
+
+    // take(5) превращает в конечную: первые 5 fib + хвост [999, 1000]
+    LazySequence<int>* taken = extended->take(5);
+    EXPECT_EQ(taken->get_length(), Cardinal::finite(7));
+    EXPECT_EQ(taken->get(0), 0);
+    EXPECT_EQ(taken->get(1), 1);
+    EXPECT_EQ(taken->get(2), 1);
+    EXPECT_EQ(taken->get(3), 2);
+    EXPECT_EQ(taken->get(4), 3);
+    EXPECT_EQ(taken->get(5), 999);
+    EXPECT_EQ(taken->get(6), 1000);
+
+    delete taken;
+    delete extended;
+}
+
+TEST(LazySequenceTest, ConcatFiniteWithFinite) {
+    int a[] = {1, 2, 3};
+    int b[] = {10, 20};
+    LazySequence<int> la(a, 3);
+    LazySequence<int> lb(b, 2);
+
+    LazySequence<int>* result = la.concat(&lb);
+
+    EXPECT_EQ(result->get_length(), Cardinal::finite(5));
+    EXPECT_EQ(result->get(0), 1);
+    EXPECT_EQ(result->get(1), 2);
+    EXPECT_EQ(result->get(2), 3);
+    EXPECT_EQ(result->get(3), 10);
+    EXPECT_EQ(result->get(4), 20);
+
+    delete result;
+}
+
+TEST(LazySequenceTest, PrependOnInfinite) {
+    int init[] = {0, 1};
+    MutableArraySequence<int> initial(init, 2);
+
+    auto rule = [](Sequence<int>* w) -> int {
+        return w->get_first() + w->get_last();
+    };
+
+    LazySequence<int> fib(rule, &initial);
+
+    LazySequence<int>* shifted = fib.prepend(-1);
+    EXPECT_TRUE(shifted->get_length().is_infinite());
+
+    EXPECT_EQ(shifted->get(0), -1);
+    EXPECT_EQ(shifted->get(1), 0);
+    EXPECT_EQ(shifted->get(2), 1);
+    EXPECT_EQ(shifted->get(3), 1);
+    EXPECT_EQ(shifted->get(4), 2);
+    EXPECT_EQ(shifted->get(10), 34);   // fib(9) = 34, теперь на индексе 10
+
+    delete shifted;
+}
+
+TEST(LazySequenceTest, InsertAtMiddleOfInfinite) {
+    int init[] = {0, 1};
+    MutableArraySequence<int> initial(init, 2);
+
+    auto rule = [](Sequence<int>* w) -> int {
+        return w->get_first() + w->get_last();
+    };
+
+    LazySequence<int> fib(rule, &initial);
+
+    // вставляем 99 на позицию 3: было [0,1,1,2,3,...], станет [0,1,1,99,2,3,...]
+    LazySequence<int>* modified = fib.insert_at(99, 3);
+    EXPECT_TRUE(modified->get_length().is_infinite());
+
+    EXPECT_EQ(modified->get(0), 0);
+    EXPECT_EQ(modified->get(1), 1);
+    EXPECT_EQ(modified->get(2), 1);
+    EXPECT_EQ(modified->get(3), 99);
+    EXPECT_EQ(modified->get(4), 2);
+    EXPECT_EQ(modified->get(5), 3);
+
+    delete modified;
+}
+
+TEST(LazySequenceTest, TakeOnFiniteEqualsCopy) {
+    int items[] = {10, 20, 30, 40, 50};
+    LazySequence<int> seq(items, 5);
+
+    LazySequence<int>* taken = seq.take(3);
+    EXPECT_EQ(taken->get_length(), Cardinal::finite(3));
+    EXPECT_EQ(taken->get(0), 10);
+    EXPECT_EQ(taken->get(1), 20);
+    EXPECT_EQ(taken->get(2), 30);
+
+    delete taken;
+}
+
+TEST(LazySequenceTest, TakeMoreThanLengthThrows) {
+    int items[] = {1, 2, 3};
+    LazySequence<int> seq(items, 3);
+
+    EXPECT_THROW(seq.take(5), std::out_of_range);
+}
+
+// ================ Комбинаторы
+
+TEST(LazySequenceTest, MapOfInfinite_TakeWorks) {
+    int init[] = {0, 1};
+    MutableArraySequence<int> initial(init, 2);
+
+    auto rule = [](Sequence<int>* w) -> int {
+        return w->get_first() + w->get_last();
+    };
+
+    LazySequence<int> fib(rule, &initial);
+
+    LazySequence<int>* squared = fib.map<int>([](const int& x) { return x * x; });
+    EXPECT_TRUE(squared->get_length().is_infinite());
+
+    LazySequence<int>* first5 = squared->take(5);
+    EXPECT_EQ(first5->get_length(), Cardinal::finite(5));
+    EXPECT_EQ(first5->get(0), 0);
+    EXPECT_EQ(first5->get(1), 1);
+    EXPECT_EQ(first5->get(2), 1);
+    EXPECT_EQ(first5->get(3), 4);     // 2*2
+    EXPECT_EQ(first5->get(4), 9);     // 3*3
+
+    delete first5;
+    delete squared;
+}
+
+TEST(LazySequenceTest, WhereOfInfinite_TakeFirstEvens) {
+    int init[] = {0, 1};
+    MutableArraySequence<int> initial(init, 2);
+
+    auto rule = [](Sequence<int>* w) -> int {
+        return w->get_first() + w->get_last();
+    };
+
+    LazySequence<int> fib(rule, &initial);
+
+    LazySequence<int>* evens = fib.where([](const int& x) { return x % 2 == 0; });
+    EXPECT_TRUE(evens->get_length().is_infinite());
+
+    // Первые чётные числа Фибоначчи: 0, 2, 8, 34, 144, ...
+    LazySequence<int>* first3 = evens->take(3);
+    EXPECT_EQ(first3->get(0), 0);
+    EXPECT_EQ(first3->get(1), 2);
+    EXPECT_EQ(first3->get(2), 8);
+
+    delete first3;
+    delete evens;
+}
+
+TEST(LazySequenceTest, ZipInfiniteWithFinite_LengthEqualsMin) {
+    int init[] = {0, 1};
+    MutableArraySequence<int> initial(init, 2);
+
+    auto rule = [](Sequence<int>* w) -> int {
+        return w->get_first() + w->get_last();
+    };
+
+    LazySequence<int> fib(rule, &initial);
+
+    int idxs[] = {100, 200, 300};
+    LazySequence<int> finite_seq(idxs, 3);
+
+    LazySequence<int>* zipped = fib.zip<int, int>(&finite_seq, [](const int& a, const int& b) { return a + b; });
+
+    EXPECT_EQ(zipped->get_length(), Cardinal::finite(3));
+    EXPECT_EQ(zipped->get(0), 100);   // 0 + 100
+    EXPECT_EQ(zipped->get(1), 201);   // 1 + 200
+    EXPECT_EQ(zipped->get(2), 301);   // 1 + 300
+
+    delete zipped;
+}
+
+TEST(LazySequenceTest, ConcatFiniteWithInfinite_LengthInfinite) {
+    int prefix[] = {100, 200};
+    LazySequence<int> head(prefix, 2);
+
+    int init[] = {0, 1};
+    MutableArraySequence<int> initial(init, 2);
+
+    auto rule = [](Sequence<int>* w) -> int {
+        return w->get_first() + w->get_last();
+    };
+
+    LazySequence<int> fib(rule, &initial);
+
+    LazySequence<int>* combined = head.concat(&fib);
+    EXPECT_TRUE(combined->get_length().is_infinite());
+
+    EXPECT_EQ(combined->get(0), 100);
+    EXPECT_EQ(combined->get(1), 200);
+    EXPECT_EQ(combined->get(2), 0);     // fib[0]
+    EXPECT_EQ(combined->get(3), 1);     // fib[1]
+    EXPECT_EQ(combined->get(4), 1);     // fib[2]
+    EXPECT_EQ(combined->get(6), 3);     // fib[4]
+
+    delete combined;
+}
+
+TEST(LazySequenceTest, ReduceOnFinite) {
+    int items[] = {1, 2, 3, 4, 5};
+    LazySequence<int> seq(items, 5);
+
+    int sum = seq.reduce([](const int& a, const int& b) { return a + b; }, 0);
+    EXPECT_EQ(sum, 15);
+
+    int product = seq.reduce([](const int& a, const int& b) { return a * b; }, 1);
+    EXPECT_EQ(product, 120);
+}
+
+TEST(LazySequenceTest, ReduceOnInfiniteThrows) {
+    int init[] = {0, 1};
+    MutableArraySequence<int> initial(init, 2);
+
+    auto rule = [](Sequence<int>* w) -> int {
+        return w->get_first() + w->get_last();
+    };
+
+    LazySequence<int> fib(rule, &initial);
+
+    EXPECT_THROW(fib.reduce([](const int& a, const int& b) { return a + b; }, 0), std::logic_error);
+}
+
+// ================ LazyEnumerator
+
+TEST(LazySequenceTest, EnumeratorOverFinite_VisitsAll) {
+    int items[] = {10, 20, 30, 40};
+    LazySequence<int> seq(items, 4);
+
+    EnumeratorWrapper<int> iter(seq.get_enumerator());
+    int expected[] = {10, 20, 30, 40};
+    int idx = 0;
+    while (iter.move_next()) {
+        EXPECT_EQ(iter.get_current(), expected[idx]);
+        idx++;
+    }
+    EXPECT_EQ(idx, 4);
+}
+
+TEST(LazySequenceTest, EnumeratorOverTakeFromInfinite) {
+    int init[] = {0, 1};
+    MutableArraySequence<int> initial(init, 2);
+
+    auto rule = [](Sequence<int>* w) -> int {
+        return w->get_first() + w->get_last();
+    };
+
+    LazySequence<int> fib(rule, &initial);
+    LazySequence<int>* taken = fib.take(7);
+
+    EnumeratorWrapper<int> iter(taken->get_enumerator());
+    int expected[] = {0, 1, 1, 2, 3, 5, 8};
+    int idx = 0;
+    while (iter.move_next()) {
+        EXPECT_EQ(iter.get_current(), expected[idx]);
+        idx++;
+    }
+    EXPECT_EQ(idx, 7);
+
+    delete taken;
+}
+
+TEST(LazySequenceTest, EnumeratorOverEmpty_NoElements) {
+    LazySequence<int> seq;
+
+    EnumeratorWrapper<int> iter(seq.get_enumerator());
+    EXPECT_FALSE(iter.move_next());
+}
+
+// ================ Проверка throws-overrides через Sequence<T>*
+
+TEST(LazySequenceTest, ThrowOverridesAccessibleViaSequencePointer) {
+    int items[] = {1, 2, 3};
+    LazySequence<int> seq(items, 3);
+    Sequence<int>* base = &seq;
+
+    EXPECT_THROW(base->slice(0, 1), std::logic_error);
+    EXPECT_THROW(base->map(nullptr), std::logic_error);
+    EXPECT_THROW(base->where(nullptr), std::logic_error);
+}
+
+TEST(LazySequenceTest, EvictionFromCache_BackwardJumpThrows) {
+    int items[] = {10, 20, 30, 40, 50, 60, 70, 80};
+    LazySequence<int> seq(items, 8, 3); // cache_capacity 3
+
+    EXPECT_EQ(seq.get_cache_capacity(), 3);
+
+    // Материализуем 0 - 2, окно [0-2]
+    EXPECT_EQ(seq.get(0), 10);
+    EXPECT_EQ(seq.get(1), 20);
+    EXPECT_EQ(seq.get(2), 30);
+    EXPECT_EQ(seq.get_materialized_count(), 3);
+
+    // Двигаемся дальше и окно сдвигается, нижние индексы вытесняются
+    EXPECT_EQ(seq.get(5), 60);
+    EXPECT_EQ(seq.get_materialized_count(), 3); // cap остался 3
+    EXPECT_EQ(seq.get(5), 60); // 5 ещё в окне
+    EXPECT_EQ(seq.get(3), 40); // 3 ещё в окне (last=5, first=3)
+}
+
+TEST(LazySequenceTest, BackwardJumpAfterEvictionThrows) {
+    int items[] = {1, 2, 3, 4, 5};
+    LazySequence<int> seq(items, 5, 2); // cache_capacity 2
+
+    EXPECT_EQ(seq.get(4), 5); // окно [3, 4]
+
+    EXPECT_THROW(seq.get(0), std::out_of_range);
+    EXPECT_THROW(seq.get(1), std::out_of_range);
+    EXPECT_THROW(seq.get(2), std::out_of_range);
+    EXPECT_EQ(seq.get(3), 4);
+    EXPECT_EQ(seq.get(4), 5);
 }
 
 TEST(LazySequenceTest, GetSubSequenceInvalidRangeThrows) {
