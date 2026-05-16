@@ -15,7 +15,7 @@ class SlidingCache { // Буфер ограниченной емкости
         size_t first_logical_index; // Лог. индекс начального элемента в окне
         size_t last_logical_index; // Лог. индекс последнего элемента в окне
     public:
-        explicit SlidingCache(int capacity); // Создаёт кэш фиксированной ёмкости
+        SlidingCache(int capacity); // Создаёт кэш фиксированной ёмкости
 
         bool is_empty() const; // Проверка на пустоту
 

@@ -4,6 +4,8 @@
 #include "core/sequence.h"
 #include "core/ienumerator.h"
 #include "lazy/cardinal.h"
+#include "lazy/ordinal_index.h"
+#include "lazy/ordinal_indexable.h"
 #include <functional>
 
 template <class T>
@@ -173,14 +175,38 @@ class ZipGenerator : public Generator<T> {
         ~ZipGenerator() override;        
 };
 
-// ConcatGenerator<T> - сначала отдаёт всё из left (длина left_length должна быть финитной), потом всё из right. Владеет обоими upstream-ами
+// ConcatGenerator<T> - конкатенация двух последовательностей.
+// Линейный режим get_next: обходит подряд left, потом right (для inf-left до right линейно не доберётся).
+// Ординальный режим get_at: {0,k} - k-й слева, {1,k} - k-й справа, минуя left.
+// Это позволяет concat(inf, inf) и доступ get({1, 2}) = 2-й элемент правой части.
 template <class T>
-class ConcatGenerator : public Generator<T> {
+class ConcatGenerator : public Generator<T>, public OrdinalIndexable<T> {
     private:
         Generator<T>* left;
         Cardinal left_length;
         Generator<T>* right;
         size_t pos;
+
+        // Создаёт клон gen и прокручивает до target_index-го элемента
+        static T materialize_at(const Generator<T>* gen, size_t target_index) {
+            if (gen == nullptr) throw std::logic_error("ConcatGenerator: upstream is null");
+            Generator<T>* probe = gen->clone();
+            T value;
+            try {
+                for (size_t i = 0; i <= target_index; i++) {
+                    if (!probe->has_next()) {
+                        delete probe;
+                        throw std::out_of_range("ConcatGenerator: index past finite upstream");
+                    }
+                    value = probe->get_next();
+                }
+            } catch (...) {
+                delete probe;
+                throw;
+            }
+            delete probe;
+            return value;
+        }
     public:
         ConcatGenerator(Generator<T>* left, Cardinal left_length, Generator<T>* right);
 
@@ -189,24 +215,64 @@ class ConcatGenerator : public Generator<T> {
 
         T get_next() override;
         Option<T> try_get_next() override;
+        T get_at(OrdinalIndex idx) const override; // Ординальный доступ: idx={0,k} - левая часть, idx={1,k} - правая часть
 
         Cardinal estimate_remaining() const override;
 
         Generator<T>* clone() const override;
 
-        ~ConcatGenerator() override;        
+        ~ConcatGenerator() override;
 };
 
-// InsertAtGenerator<T> - выдаёт upstream до inject_position, затем inject_item один раз, затем продолжает upstream
+// InsertAtGenerator<T> - вставка одного элемента или целой последовательности (в т.ч. бесконечной) в произвольную позицию upstream.
+//
+// Линейный режим (get_next):
+//   - injected финитный длины m: upstream[0..p), injected[0..m), upstream[p..)
+//   - injected бесконечный: upstream[0..p), injected[0..) - upstream после p
+//     линейно недостижим, остаётся для get_at({1, k})
+//
+// Ординальный режим (get_at):
+//   injected финитный длины m:
+//     {0, i}, i<p           -> upstream[i]
+//     {0, p..p+m-1}         -> injected[i-p]
+//     {0, i}, i>=p+m        -> upstream[i-m]
+//   injected бесконечный:
+//     {0, i}, i<p           -> upstream[i]
+//     {0, i}, i>=p          -> injected[i-p]
+//     {1, k}                -> upstream[p+k]  (хвост, "оттеснённый" за омегу)
 template <class T>
-class InsertAtGenerator : public Generator<T> {
+class InsertAtGenerator : public Generator<T>, public OrdinalIndexable<T> {
     private:
         size_t inject_position;
-        T inject_item;
         Generator<T>* upstream;
+        Generator<T>* injected;
+        Cardinal injected_length;
         size_t pos;
+
+        // Перемотка свежего клона gen на k-й элемент
+        static T materialize_at(const Generator<T>* gen, size_t target_index) {
+            if (gen == nullptr) throw std::logic_error("InsertAtGenerator: upstream is null");
+            Generator<T>* probe = gen->clone();
+            T value;
+            try {
+                for (size_t i = 0; i <= target_index; i++) {
+                    if (!probe->has_next()) {
+                        delete probe;
+                        throw std::out_of_range("InsertAtGenerator: index past finite upstream");
+                    }
+                    value = probe->get_next();
+                }
+            } catch (...) {
+                delete probe;
+                throw;
+            }
+            delete probe;
+            return value;
+        }
     public:
+        // Старый API: вставка одного элемента (внутри оборачивается в одноэлементный генератор)
         InsertAtGenerator(size_t inject_position, const T& item, Generator<T>* upstream);
+        InsertAtGenerator(size_t inject_position, Generator<T>* injected, Cardinal injected_length, Generator<T>* upstream);
 
         size_t position() const override { return pos; }
         bool has_next() const override;
@@ -218,7 +284,9 @@ class InsertAtGenerator : public Generator<T> {
 
         Generator<T>* clone() const override;
 
-        ~InsertAtGenerator() override;        
+        T get_at(OrdinalIndex idx) const override;
+
+        ~InsertAtGenerator() override;
 };
 
 #include "generator.tpp"

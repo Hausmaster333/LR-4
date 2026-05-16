@@ -11,7 +11,7 @@ class SequenceWriteStream : public WriteOnlyStream<T> {
     public:
         // Создаёт стрим над destination. destination != nullptr иначе throw
         // Стрим в закрытом состоянии, нужно вызвать open
-        explicit SequenceWriteStream(Sequence<T>* destination);
+        SequenceWriteStream(Sequence<T>* destination);
 
         size_t write(const T& value) override; // Делает destination->append(value), возвращает обновлённую position
 

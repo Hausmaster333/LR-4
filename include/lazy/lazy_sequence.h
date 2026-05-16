@@ -5,6 +5,7 @@
 #include "core/option.h"
 #include "core/ienumerator.h"
 #include "lazy/cardinal.h"
+#include "lazy/ordinal_index.h"
 #include "lazy/sliding_cache.h"
 #include "lazy/deferred_tail.h"
 #include <functional>
@@ -37,7 +38,7 @@ class LazySequence : public Sequence<T> {
     public:
         static constexpr int DEFAULT_CACHE_CAPACITY = 64;
 
-        explicit LazySequence(int cache_capacity = DEFAULT_CACHE_CAPACITY);
+        LazySequence(int cache_capacity = DEFAULT_CACHE_CAPACITY);
         LazySequence(const T* items, int count, int cache_capacity = DEFAULT_CACHE_CAPACITY);
         LazySequence(const Sequence<T>* source, int cache_capacity = DEFAULT_CACHE_CAPACITY);
         LazySequence(std::function<T(Sequence<T>*)> rule, const Sequence<T>* initial, int cache_capacity = DEFAULT_CACHE_CAPACITY);
@@ -54,6 +55,11 @@ class LazySequence : public Sequence<T> {
         LazySequence<T>* append(const T& item) override;
         LazySequence<T>* prepend(const T& item) override;
         LazySequence<T>* insert_at(const T& item, int index) override;
+
+        // Вставка последовательности (финитной или бесконечной) в позицию index.
+        // Все 4 комбинации (this finite/inf × other finite/inf) поддержаны.
+        // При insert(inf, k, inf) длина результата = ω·2, хвост this доступен через get(OrdinalIndex{1, k}).
+        LazySequence<T>* insert_at(LazySequence<T>* other, int index);
 
         // ========= Бросают logic_error с указанием подходящего метода-замены
         const T& get_last() const override;
@@ -86,6 +92,11 @@ class LazySequence : public Sequence<T> {
         T get_tail_at(int tail_index) const { return tail.get(tail_index); }
 
         T get(int index); // Чтение элемента по индексу. Материализует кэш до этого индекса, нельзя вызвать по индексу, который вытеснился из кэша
+
+        // Ординальный доступ. {0,k} - просто k-й элемент (как get(int)).
+        // {1,k} - k-й элемент во втором w блоке, например для concat(inf, inf).
+        // Требует, чтобы корневой генератор был ConcatGenerator с infinite left.
+        T get(OrdinalIndex idx);
 
         LazySequence<T>* get_sub_sequence(int start, int end); // Создает финитную, длиной end - start + 1
         LazySequence<T>* take(int n); // Возвращает новую финитную LazySequence из первых n элементов, начиная с 0 idx. Если кэш сдвинулся, то не будет работать, надо делать reset

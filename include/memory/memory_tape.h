@@ -74,7 +74,7 @@ class MemoryTape {
         }
     public:
         // Создаёт пустую ленту длины capacity. capacity > 0 иначе throw
-        explicit MemoryTape(int capacity)
+        MemoryTape(int capacity)
             : cells(validated_capacity(capacity)),
               capacity(capacity),
               next_block_id(0),

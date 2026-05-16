@@ -183,64 +183,156 @@ Generator<T>* PrependGenerator<T>::clone() const {
 
 template <class T>
 InsertAtGenerator<T>::InsertAtGenerator(size_t inject_position, const T& item, Generator<T>* upstream)
-    : inject_position(inject_position), inject_item(item), upstream(upstream), pos(0) {
-
+    : inject_position(inject_position),
+      upstream(upstream),
+      injected(nullptr),
+      injected_length(Cardinal::finite(1)),
+      pos(0) {
     if (upstream == nullptr) throw std::invalid_argument("InsertAtGenerator: upstream is nullptr");
+
+    // Оборачиваем единственный элемент в одноэлементный генератор
+    MutableArraySequence<T>* one = new MutableArraySequence<T>();
+    one->append(item);
+    injected = SourceGenerator<T>::own(one);
+}
+
+template <class T>
+InsertAtGenerator<T>::InsertAtGenerator(size_t inject_position,
+                                        Generator<T>* injected, Cardinal injected_length,
+                                        Generator<T>* upstream)
+    : inject_position(inject_position),
+      upstream(upstream),
+      injected(injected),
+      injected_length(injected_length),
+      pos(0) {
+    if (upstream == nullptr) throw std::invalid_argument("InsertAtGenerator: upstream is nullptr");
+    if (injected == nullptr) throw std::invalid_argument("InsertAtGenerator: injected is nullptr");
 }
 
 template <class T>
 InsertAtGenerator<T>::~InsertAtGenerator() {
     delete upstream;
+    delete injected;
 }
 
 template <class T>
 bool InsertAtGenerator<T>::has_next() const {
+    // До точки вставки - смотрим upstream
     if (pos < inject_position) return upstream->has_next();
-    if (pos == inject_position) return true;
 
-    return upstream->has_next();
+    // В точке вставки и далее
+    if (injected_length.is_finite()) {
+        size_t m = injected_length.get_value();
+        if (pos < inject_position + m) {
+            // Сейчас в зоне inserted
+            return injected->has_next();
+        }
+        // После вставки - снова upstream
+        return upstream->has_next();
+    }
+    // Бесконечная вставка: после inject_position навсегда injected
+    return injected->has_next();
 }
 
 template <class T>
 T InsertAtGenerator<T>::get_next() {
     if (pos < inject_position) {
-        if (!upstream->has_next()) {
+        if (!upstream->has_next())
             throw std::out_of_range("InsertAtGenerator: upstream exhausted before inject_position");
-        }
         pos++;
         return upstream->get_next();
     }
 
-    if (pos == inject_position) {
+    if (injected_length.is_finite()) {
+        size_t m = injected_length.get_value();
+        if (pos < inject_position + m) {
+            if (!injected->has_next())
+                throw std::out_of_range("InsertAtGenerator: injected exhausted unexpectedly");
+            pos++;
+            return injected->get_next();
+        }
+        // Зона после вставки - продолжаем upstream
+        if (!upstream->has_next())
+            throw std::out_of_range("InsertAtGenerator: upstream exhausted");
         pos++;
-        return inject_item;
+        return upstream->get_next();
     }
 
-    // pos > inject_position
-    if (!upstream->has_next()) throw std::out_of_range("InsertAtGenerator: upstream exhausted");
+    // injected бесконечна: после inject_position - всегда injected
+    if (!injected->has_next())
+        throw std::out_of_range("InsertAtGenerator: injected exhausted unexpectedly");
     pos++;
-
-    return upstream->get_next();
+    return injected->get_next();
 }
 
 template <class T>
 Option<T> InsertAtGenerator<T>::try_get_next() {
     if (!has_next()) return Option<T>::None();
-
     return Option<T>::Some(get_next());
 }
 
 template <class T>
 Cardinal InsertAtGenerator<T>::estimate_remaining() const {
     Cardinal upstream_remaining = upstream->estimate_remaining();
-    if (pos <= inject_position) return upstream_remaining + Cardinal::finite(1);
 
-    return upstream_remaining;
+    if (injected_length.is_finite()) {
+        size_t m = injected_length.get_value();
+        if (pos < inject_position) {
+            // Впереди: остаток upstream до inject_position + m injected + хвост upstream
+            return upstream_remaining + Cardinal::finite(m);
+        }
+        if (pos < inject_position + m) {
+            // Внутри вставки: остаток injected + хвост upstream
+            size_t remain_injected = inject_position + m - pos;
+            return Cardinal::finite(remain_injected) + upstream_remaining;
+        }
+        return upstream_remaining;
+    }
+
+    // injected бесконечен
+    if (pos < inject_position) {
+        // upstream до p, потом injected (бесконечная), потом хвост upstream (за омегу)
+        return upstream_remaining + Cardinal::infinity();
+    }
+    // pos >= inject_position - мы уже в injected, остаток = injected.remaining + хвост upstream (за омегу)
+    return injected->estimate_remaining() + upstream_remaining;
 }
 
 template <class T>
 Generator<T>* InsertAtGenerator<T>::clone() const {
-    return new InsertAtGenerator<T>(inject_position, inject_item, upstream->clone());
+    return new InsertAtGenerator<T>(inject_position, injected->clone(), injected_length, upstream->clone());
+}
+
+template <class T>
+T InsertAtGenerator<T>::get_at(OrdinalIndex idx) const {
+    if (injected_length.is_finite()) {
+        size_t m = injected_length.get_value();
+        if (idx.omega_part == 0) {
+            if (idx.finite_part < inject_position) {
+                return materialize_at(upstream, idx.finite_part);
+            }
+            if (idx.finite_part < inject_position + m) {
+                return materialize_at(injected, idx.finite_part - inject_position);
+            }
+            // элемент upstream после вставки - сдвинут на m
+            return materialize_at(upstream, idx.finite_part - m);
+        }
+        throw std::out_of_range("InsertAtGenerator::get_at: finite insert has no omega blocks");
+    }
+
+    // injected бесконечен
+    if (idx.omega_part == 0) {
+        if (idx.finite_part < inject_position) {
+            return materialize_at(upstream, idx.finite_part);
+        }
+        // {0, p + k} - это k-й элемент injected
+        return materialize_at(injected, idx.finite_part - inject_position);
+    }
+    if (idx.omega_part == 1) {
+        // {1, k} - это (inject_position + k)-й элемент upstream (хвост за омегой)
+        return materialize_at(upstream, inject_position + idx.finite_part);
+    }
+    throw std::out_of_range("InsertAtGenerator::get_at: ordinal index beyond omega*2");
 }
 
 // ================= MapGenerator
@@ -371,35 +463,40 @@ Generator<T>* ZipGenerator<U, V, T>::clone() const {
 // ================= ConcatGenerator
 
 template <class T>
-ConcatGenerator<T>::ConcatGenerator(Generator<T>* left, Cardinal left_length, Generator<T>* right) : left(left), left_length(left_length), right(right), pos(0) {
-    if (left == nullptr || right == nullptr) throw std::invalid_argument("ConcatGenerator: nullptr operand");
-    if (left_length.is_infinite()) throw std::invalid_argument("ConcatGenerator: left_length must be finite");
-}
-
-template <class T>
-ConcatGenerator<T>::~ConcatGenerator() {
-    delete left;
-    delete right;
+ConcatGenerator<T>::ConcatGenerator(Generator<T>* left, Cardinal left_length, Generator<T>* right)
+    : left(left), left_length(left_length), right(right), pos(0) {
+    if (left == nullptr || right == nullptr) throw std::invalid_argument("Nullptr operand in concatenation");
 }
 
 template <class T>
 bool ConcatGenerator<T>::has_next() const {
-    if (pos < left_length.get_value()) return left->has_next();
+    if (left->has_next()) {
+        if (left_length.is_finite() && pos >= left_length.get_value()) {
+            return right->has_next();
+        }
+        return true;
+    }
 
     return right->has_next();
 }
 
 template <class T>
 T ConcatGenerator<T>::get_next() {
-    if (pos < left_length.get_value()) {
-        if (!left->has_next()) throw std::out_of_range("ConcatGenerator: left exhausted unexpectedly");
+    bool left_exhausted = !left->has_next();
+
+    if (left_length.is_finite() && pos >= left_length.get_value()) {
+        left_exhausted = true;
+    }
+
+    if (!left_exhausted) {
         pos++;
         return left->get_next();
     }
-    if (!right->has_next()) throw std::out_of_range("ConcatGenerator: right exhausted");
-    pos++;
 
-    return right->get_next();
+    if (!right->has_next()) { throw std::out_of_range("both sides exhausted"); }
+
+    pos++;
+    return right->get_next()
 }
 
 template <class T>
@@ -411,17 +508,46 @@ Option<T> ConcatGenerator<T>::try_get_next() {
 
 template <class T>
 Cardinal ConcatGenerator<T>::estimate_remaining() const {
+    if (left_length.is_infinite()) {
+        return Cardinal::infinity() + right->estimate_remaining();
+    }
     if (pos < left_length.get_value()) {
         Cardinal left_remaining = Cardinal::finite(left_length.get_value() - pos);
         return left_remaining + right->estimate_remaining();
     }
-
     return right->estimate_remaining();
 }
 
 template <class T>
 Generator<T>* ConcatGenerator<T>::clone() const {
     return new ConcatGenerator<T>(left->clone(), left_length, right->clone());
+}
+
+template <class T>
+T ConcatGenerator<T>::get_at(OrdinalIndex idx) const {
+    if (idx.omega_part == 0) {
+        if (left_length.is_finite()) {
+            size_t left_len = left_length.get_value();
+            if (idx.finite_part >= left_len) {
+                // Перелив в правую часть для конечного left
+                return materialize_at(right, idx.finite_part - left_len);
+            }
+        }
+        return materialize_at(left, idx.finite_part);
+    }
+    if (idx.omega_part == 1) {
+        if (!left_length.is_infinite()) {
+            throw std::logic_error("ConcatGenerator::get_at: omega_part=1 requires infinite left");
+        }
+        return materialize_at(right, idx.finite_part);
+    }
+    throw std::logic_error("ConcatGenerator::get_at: ordinal index beyond omega*2 not supported");
+}
+
+template <class T>
+ConcatGenerator<T>::~ConcatGenerator() {
+    delete left;
+    delete right;
 }
 
 #endif

@@ -11,7 +11,7 @@ class LazyReadStream : public ReadOnlyStream<T> { // Поток для чтен�
     public:
         // Создаёт стрим над source. source != nullptr иначе throw
         // Стрим в закрытом состоянии, нужно вызвать open
-        explicit LazyReadStream(LazySequence<T>* source);
+        LazyReadStream(LazySequence<T>* source);
 
         bool is_end_of_stream() const override; // True если source финитный и position достиг его длины, на бесконечной LazySequence всегда возвращает false
 
