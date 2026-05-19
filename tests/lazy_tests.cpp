@@ -109,29 +109,29 @@ TEST(SlidingCacheTest, RingWrapsCorrectly) {
     EXPECT_EQ(c.get(9), 9);
 }
 
-// ================ Cardinal tests
+// ================ Ordinal tests
 
-TEST(CardinalTest, FiniteCardinal) {
-    Cardinal c = Cardinal::finite(5);
+TEST(OrdinalTest, FiniteOrdinal) {
+    Ordinal c = Ordinal::finite(5);
 
     EXPECT_TRUE(c.is_finite());
     EXPECT_FALSE(c.is_infinite());
     EXPECT_EQ(c.get_value(), 5u);
 }
 
-TEST(CardinalTest, InfiniteCardinal) {
-    Cardinal c = Cardinal::infinity();
+TEST(OrdinalTest, InfiniteOrdinal) {
+    Ordinal c = Ordinal::infinity();
 
     EXPECT_TRUE(c.is_infinite());
     EXPECT_FALSE(c.is_finite());
     EXPECT_THROW(c.get_value(), std::logic_error);
 }
 
-TEST(CardinalTest, Equality) {
-    EXPECT_EQ(Cardinal::finite(3), Cardinal::finite(3));
-    EXPECT_NE(Cardinal::finite(3), Cardinal::finite(4));
-    EXPECT_EQ(Cardinal::infinity(), Cardinal::infinity());
-    EXPECT_NE(Cardinal::finite(1000000), Cardinal::infinity());
+TEST(OrdinalTest, Equality) {
+    EXPECT_EQ(Ordinal::finite(3), Ordinal::finite(3));
+    EXPECT_NE(Ordinal::finite(3), Ordinal::finite(4));
+    EXPECT_EQ(Ordinal::infinity(), Ordinal::infinity());
+    EXPECT_NE(Ordinal::finite(1000000), Ordinal::infinity());
 }
 
 // ================ LazySequence tests
@@ -139,7 +139,7 @@ TEST(CardinalTest, Equality) {
 TEST(LazySequenceTest, EmptyConstructor) {
     LazySequence<int> seq;
 
-    EXPECT_EQ(seq.get_length(), Cardinal::finite(0));
+    EXPECT_EQ(seq.get_length(), Ordinal::finite(0));
     EXPECT_EQ(seq.get_materialized_count(), 0);
 }
 
@@ -148,7 +148,7 @@ TEST(LazySequenceTest, ArrayConstructor) {
 
     LazySequence<int> seq(items, 3);
 
-    EXPECT_EQ(seq.get_length(), Cardinal::finite(3));
+    EXPECT_EQ(seq.get_length(), Ordinal::finite(3));
     // Крконструктор не материализует элементы сразу и кэш изначально пуст, материализация при get().
     EXPECT_EQ(seq.get_materialized_count(), 0);
 
@@ -163,7 +163,7 @@ TEST(LazySequenceTest, SequenceConstructor) {
 
     LazySequence<int> seq(&source);
 
-    EXPECT_EQ(seq.get_length(), Cardinal::finite(3));
+    EXPECT_EQ(seq.get_length(), Ordinal::finite(3));
     EXPECT_EQ(seq.get_materialized_count(), 0);
 
     seq.get(2);
@@ -206,10 +206,10 @@ TEST(LazySequenceTest, AppendReturnsNewSequence) {
 
     LazySequence<int>* result = seq.append(4);
 
-    EXPECT_EQ(seq.get_length(), Cardinal::finite(3));
+    EXPECT_EQ(seq.get_length(), Ordinal::finite(3));
     EXPECT_EQ(seq.get_last(), 3);
 
-    EXPECT_EQ(result->get_length(), Cardinal::finite(4));
+    EXPECT_EQ(result->get_length(), Ordinal::finite(4));
     EXPECT_EQ(result->get(0), 1);
     EXPECT_EQ(result->get(1), 2);
     EXPECT_EQ(result->get(2), 3);
@@ -224,10 +224,10 @@ TEST(LazySequenceTest, PrependReturnsNewSequence) {
 
     LazySequence<int>* result = seq.prepend(1);
 
-    EXPECT_EQ(seq.get_length(), Cardinal::finite(3));
+    EXPECT_EQ(seq.get_length(), Ordinal::finite(3));
     EXPECT_EQ(seq.get_first(), 2);
 
-    EXPECT_EQ(result->get_length(), Cardinal::finite(4));
+    EXPECT_EQ(result->get_length(), Ordinal::finite(4));
     EXPECT_EQ(result->get(0), 1);
     EXPECT_EQ(result->get(1), 2);
     EXPECT_EQ(result->get(2), 3);
@@ -242,10 +242,10 @@ TEST(LazySequenceTest, InsertAtMiddleReturnsNewSequence) {
 
     LazySequence<int>* result = seq.insert_at(3, 2);
 
-    EXPECT_EQ(seq.get_length(), Cardinal::finite(3));
+    EXPECT_EQ(seq.get_length(), Ordinal::finite(3));
     EXPECT_EQ(seq.get(2), 4);
 
-    EXPECT_EQ(result->get_length(), Cardinal::finite(4));
+    EXPECT_EQ(result->get_length(), Ordinal::finite(4));
     EXPECT_EQ(result->get(0), 1);
     EXPECT_EQ(result->get(1), 2);
     EXPECT_EQ(result->get(2), 3);
@@ -294,7 +294,7 @@ TEST(LazySequenceTest, GetSubSequenceMiddle) {
 
     LazySequence<int>* result = seq.get_sub_sequence(1, 3);
 
-    EXPECT_EQ(result->get_length(), Cardinal::finite(3));
+    EXPECT_EQ(result->get_length(), Ordinal::finite(3));
     EXPECT_EQ(result->get(0), 20);
     EXPECT_EQ(result->get(1), 30);
     EXPECT_EQ(result->get(2), 40);
@@ -308,7 +308,7 @@ TEST(LazySequenceTest, GetSubSequenceSingleElement) {
 
     LazySequence<int>* result = seq.get_sub_sequence(1, 1);
 
-    EXPECT_EQ(result->get_length(), Cardinal::finite(1));
+    EXPECT_EQ(result->get_length(), Ordinal::finite(1));
     EXPECT_EQ(result->get(0), 20);
 
     delete result;
@@ -320,7 +320,7 @@ TEST(LazySequenceTest, GetSubSequenceFullRange) {
 
     LazySequence<int>* result = seq.get_sub_sequence(0, 2);
 
-    EXPECT_EQ(result->get_length(), Cardinal::finite(3));
+    EXPECT_EQ(result->get_length(), Ordinal::finite(3));
     EXPECT_EQ(result->get(0), 1);
     EXPECT_EQ(result->get(1), 2);
     EXPECT_EQ(result->get(2), 3);
@@ -436,7 +436,7 @@ TEST(LazySequenceTest, TakeAfterAppendOnInfinite_TailApplied) {
 
     // take(5) превращает в конечную: первые 5 fib + хвост [999, 1000]
     LazySequence<int>* taken = extended->take(5);
-    EXPECT_EQ(taken->get_length(), Cardinal::finite(7));
+    EXPECT_EQ(taken->get_length(), Ordinal::finite(7));
     EXPECT_EQ(taken->get(0), 0);
     EXPECT_EQ(taken->get(1), 1);
     EXPECT_EQ(taken->get(2), 1);
@@ -457,7 +457,7 @@ TEST(LazySequenceTest, ConcatFiniteWithFinite) {
 
     LazySequence<int>* result = la.concat(&lb);
 
-    EXPECT_EQ(result->get_length(), Cardinal::finite(5));
+    EXPECT_EQ(result->get_length(), Ordinal::finite(5));
     EXPECT_EQ(result->get(0), 1);
     EXPECT_EQ(result->get(1), 2);
     EXPECT_EQ(result->get(2), 3);
@@ -519,7 +519,7 @@ TEST(LazySequenceTest, TakeOnFiniteEqualsCopy) {
     LazySequence<int> seq(items, 5);
 
     LazySequence<int>* taken = seq.take(3);
-    EXPECT_EQ(taken->get_length(), Cardinal::finite(3));
+    EXPECT_EQ(taken->get_length(), Ordinal::finite(3));
     EXPECT_EQ(taken->get(0), 10);
     EXPECT_EQ(taken->get(1), 20);
     EXPECT_EQ(taken->get(2), 30);
@@ -550,7 +550,7 @@ TEST(LazySequenceTest, MapOfInfinite_TakeWorks) {
     EXPECT_TRUE(squared->get_length().is_infinite());
 
     LazySequence<int>* first5 = squared->take(5);
-    EXPECT_EQ(first5->get_length(), Cardinal::finite(5));
+    EXPECT_EQ(first5->get_length(), Ordinal::finite(5));
     EXPECT_EQ(first5->get(0), 0);
     EXPECT_EQ(first5->get(1), 1);
     EXPECT_EQ(first5->get(2), 1);
@@ -599,7 +599,7 @@ TEST(LazySequenceTest, ZipInfiniteWithFinite_LengthEqualsMin) {
 
     LazySequence<int>* zipped = fib.zip<int, int>(&finite_seq, [](const int& a, const int& b) { return a + b; });
 
-    EXPECT_EQ(zipped->get_length(), Cardinal::finite(3));
+    EXPECT_EQ(zipped->get_length(), Ordinal::finite(3));
     EXPECT_EQ(zipped->get(0), 100);   // 0 + 100
     EXPECT_EQ(zipped->get(1), 201);   // 1 + 200
     EXPECT_EQ(zipped->get(2), 301);   // 1 + 300
@@ -734,17 +734,32 @@ TEST(LazySequenceTest, EvictionFromCache_BackwardJumpThrows) {
     EXPECT_EQ(seq.get(3), 40); // 3 ещё в окне (last=5, first=3)
 }
 
-TEST(LazySequenceTest, BackwardJumpAfterEvictionThrows) {
+TEST(LazySequenceTest, BackwardJumpAfterEvictionWorksViaOrdinalIndexable) {
+    // SourceGenerator реализует OrdinalIndexable, поэтому backward jump
+    // через cache-eviction fallback работает корректно.
     int items[] = {1, 2, 3, 4, 5};
     LazySequence<int> seq(items, 5, 2); // cache_capacity 2
 
-    EXPECT_EQ(seq.get(4), 5); // окно [3, 4]
+    EXPECT_EQ(seq.get(4), 5); // окно [3, 4], индексы 0..2 вытеснены
 
-    EXPECT_THROW(seq.get(0), std::out_of_range);
-    EXPECT_THROW(seq.get(1), std::out_of_range);
-    EXPECT_THROW(seq.get(2), std::out_of_range);
+    // Backward jump через OrdinalIndexable
+    EXPECT_EQ(seq.get(0), 1);
+    EXPECT_EQ(seq.get(1), 2);
+    EXPECT_EQ(seq.get(2), 3);
     EXPECT_EQ(seq.get(3), 4);
     EXPECT_EQ(seq.get(4), 5);
+}
+
+TEST(LazySequenceTest, BackwardJumpAfterEvictionThrowsForRecurrence) {
+    // RecurrenceGenerator не реализует OrdinalIndexable, backward jump
+    // после eviction должен бросать.
+    MutableArraySequence<int> initial;
+    initial.append(0);
+    auto rule = [](Sequence<int>* w) -> int { return w->get_last() + 1; };
+    LazySequence<int> seq(rule, &initial, 2); // cache_capacity 2
+
+    EXPECT_EQ(seq.get(10), 10); // окно сдвинулось
+    EXPECT_THROW(seq.get(0), std::out_of_range);
 }
 
 TEST(LazySequenceTest, GetSubSequenceInvalidRangeThrows) {

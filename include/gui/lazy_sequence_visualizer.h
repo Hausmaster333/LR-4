@@ -20,8 +20,8 @@ inline void draw_lazy_cell(ImDrawList* draw, ImVec2 top_left, float width, float
     }
 }
 
-// Печатает Cardinal: либо «infinity», либо число
-inline void print_cardinal(char* buffer, size_t buffer_size, const Cardinal& cardinal) {
+// Печатает Ordinal: либо «infinity», либо число
+inline void print_cardinal(char* buffer, size_t buffer_size, const Ordinal& cardinal) {
     if (cardinal.is_infinite()) {
         snprintf(buffer, buffer_size, "infinity");
     } else {

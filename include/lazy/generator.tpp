@@ -65,16 +65,29 @@ Option<T> SourceGenerator<T>::try_get_next() {
 }
 
 template <class T>
-Cardinal SourceGenerator<T>::estimate_remaining() const {
-    if (pos >= total) return Cardinal::zero();
+Ordinal SourceGenerator<T>::estimate_remaining() const {
+    if (pos >= total) return Ordinal::zero();
 
-    return Cardinal::finite(total - pos);
+    return Ordinal::finite(total - pos);
 }
 
 template <class T>
 Generator<T>* SourceGenerator<T>::clone() const {
     // Копия с pos = 0 - копирующий конструктор сам стартует с нуля
     return new SourceGenerator<T>(owned);
+}
+
+template <class T>
+T SourceGenerator<T>::get_at(OrdinalIndex idx) const {
+    if (idx.omega_part != 0)
+        throw std::out_of_range("SourceGenerator::get_at: source is finite, omega_part must be 0");
+    if (idx.finite_part >= total)
+        throw std::out_of_range("SourceGenerator::get_at: index past end");
+    // Fast path: если owned - ArraySequence (типично), O(1) индекс.
+    // Иначе fallback на линейную материализацию (для list-based sequence).
+    auto* arr = dynamic_cast<ArraySequence<T>*>(owned);
+    if (arr != nullptr) return arr->get(static_cast<int>(idx.finite_part));
+    return materialize_at_linear(static_cast<const Generator<T>*>(this), idx.finite_part);
 }
 
 // ================= RecurrenceGenerator
@@ -167,9 +180,9 @@ Option<T> PrependGenerator<T>::try_get_next() {
 }
 
 template <class T>
-Cardinal PrependGenerator<T>::estimate_remaining() const {
-    Cardinal upstream_remaining = upstream->estimate_remaining();
-    if (pos == 0) return upstream_remaining + Cardinal::finite(1);
+Ordinal PrependGenerator<T>::estimate_remaining() const {
+    Ordinal upstream_remaining = upstream->estimate_remaining();
+    if (pos == 0) return upstream_remaining + Ordinal::finite(1);
 
     return upstream_remaining;
 }
@@ -179,6 +192,24 @@ Generator<T>* PrependGenerator<T>::clone() const {
     return new PrependGenerator<T>(head_item, upstream->clone());
 }
 
+template <class T>
+T PrependGenerator<T>::get_at(OrdinalIndex idx) const {
+    // {0, 0} -> head, остальные сдвигаются.
+    // Ординально: 1 + (a*ω + n) = a*ω + n при a > 0, либо 1 + n = 1 + n при a == 0.
+    // Так что в финитной части индекс сдвигается на -1, в ω-блоках не меняется.
+    if (idx.omega_part == 0) {
+        if (idx.finite_part == 0) return head_item;
+        OrdinalIndex shifted(0, idx.finite_part - 1);
+        auto* up = dynamic_cast<OrdinalIndexable<T>*>(upstream);
+        if (up != nullptr) return up->get_at(shifted);
+        return materialize_at_linear(upstream, shifted.finite_part);
+    }
+    // omega_part > 0 - в апстриме на той же позиции
+    auto* up = dynamic_cast<OrdinalIndexable<T>*>(upstream);
+    if (up != nullptr) return up->get_at(idx);
+    throw std::logic_error("PrependGenerator::get_at: upstream is not ordinal-indexable");
+}
+
 // ================= InsertAtGenerator<T>
 
 template <class T>
@@ -186,7 +217,7 @@ InsertAtGenerator<T>::InsertAtGenerator(size_t inject_position, const T& item, G
     : inject_position(inject_position),
       upstream(upstream),
       injected(nullptr),
-      injected_length(Cardinal::finite(1)),
+      injected_length(Ordinal::finite(1)),
       pos(0) {
     if (upstream == nullptr) throw std::invalid_argument("InsertAtGenerator: upstream is nullptr");
 
@@ -198,7 +229,7 @@ InsertAtGenerator<T>::InsertAtGenerator(size_t inject_position, const T& item, G
 
 template <class T>
 InsertAtGenerator<T>::InsertAtGenerator(size_t inject_position,
-                                        Generator<T>* injected, Cardinal injected_length,
+                                        Generator<T>* injected, Ordinal injected_length,
                                         Generator<T>* upstream)
     : inject_position(inject_position),
       upstream(upstream),
@@ -272,19 +303,19 @@ Option<T> InsertAtGenerator<T>::try_get_next() {
 }
 
 template <class T>
-Cardinal InsertAtGenerator<T>::estimate_remaining() const {
-    Cardinal upstream_remaining = upstream->estimate_remaining();
+Ordinal InsertAtGenerator<T>::estimate_remaining() const {
+    Ordinal upstream_remaining = upstream->estimate_remaining();
 
     if (injected_length.is_finite()) {
         size_t m = injected_length.get_value();
         if (pos < inject_position) {
             // Впереди: остаток upstream до inject_position + m injected + хвост upstream
-            return upstream_remaining + Cardinal::finite(m);
+            return upstream_remaining + Ordinal::finite(m);
         }
         if (pos < inject_position + m) {
             // Внутри вставки: остаток injected + хвост upstream
             size_t remain_injected = inject_position + m - pos;
-            return Cardinal::finite(remain_injected) + upstream_remaining;
+            return Ordinal::finite(remain_injected) + upstream_remaining;
         }
         return upstream_remaining;
     }
@@ -292,7 +323,7 @@ Cardinal InsertAtGenerator<T>::estimate_remaining() const {
     // injected бесконечен
     if (pos < inject_position) {
         // upstream до p, потом injected (бесконечная), потом хвост upstream (за омегу)
-        return upstream_remaining + Cardinal::infinity();
+        return upstream_remaining + Ordinal::infinity();
     }
     // pos >= inject_position - мы уже в injected, остаток = injected.remaining + хвост upstream (за омегу)
     return injected->estimate_remaining() + upstream_remaining;
@@ -309,30 +340,32 @@ T InsertAtGenerator<T>::get_at(OrdinalIndex idx) const {
         size_t m = injected_length.get_value();
         if (idx.omega_part == 0) {
             if (idx.finite_part < inject_position) {
-                return materialize_at(upstream, idx.finite_part);
+                return materialize_at_ord(upstream, OrdinalIndex(0, idx.finite_part));
             }
             if (idx.finite_part < inject_position + m) {
-                return materialize_at(injected, idx.finite_part - inject_position);
+                return materialize_at_ord(injected, OrdinalIndex(0, idx.finite_part - inject_position));
             }
             // элемент upstream после вставки - сдвинут на m
-            return materialize_at(upstream, idx.finite_part - m);
+            return materialize_at_ord(upstream, OrdinalIndex(0, idx.finite_part - m));
         }
-        throw std::out_of_range("InsertAtGenerator::get_at: finite insert has no omega blocks");
+        // omega_part > 0 при финитной вставке - это просто upstream в той же ω-позиции
+        return materialize_at_ord(upstream, idx);
     }
 
     // injected бесконечен
     if (idx.omega_part == 0) {
         if (idx.finite_part < inject_position) {
-            return materialize_at(upstream, idx.finite_part);
+            return materialize_at_ord(upstream, OrdinalIndex(0, idx.finite_part));
         }
         // {0, p + k} - это k-й элемент injected
-        return materialize_at(injected, idx.finite_part - inject_position);
+        return materialize_at_ord(injected, OrdinalIndex(0, idx.finite_part - inject_position));
     }
     if (idx.omega_part == 1) {
         // {1, k} - это (inject_position + k)-й элемент upstream (хвост за омегой)
-        return materialize_at(upstream, inject_position + idx.finite_part);
+        return materialize_at_ord(upstream, OrdinalIndex(0, inject_position + idx.finite_part));
     }
-    throw std::out_of_range("InsertAtGenerator::get_at: ordinal index beyond omega*2");
+    // omega_part > 1: остальные ω-блоки находятся в апстриме (если он их имеет)
+    return materialize_at_ord(upstream, idx);
 }
 
 // ================= MapGenerator
@@ -368,6 +401,16 @@ Option<T> MapGenerator<U, T>::try_get_next() {
 template <class U, class T>
 Generator<T>* MapGenerator<U, T>::clone() const {
     return new MapGenerator<U, T>(upstream->clone(), func);
+}
+
+template <class U, class T>
+T MapGenerator<U, T>::get_at(OrdinalIndex idx) const {
+    auto* up = dynamic_cast<OrdinalIndexable<U>*>(upstream);
+    if (up != nullptr) return func(up->get_at(idx));
+    // Линейный fallback: работает только для финитной части
+    if (idx.omega_part != 0)
+        throw std::logic_error("MapGenerator::get_at: upstream is not ordinal-indexable");
+    return func(materialize_at_linear(upstream, idx.finite_part));
 }
 
 // ================= WhereGenerator
@@ -448,9 +491,9 @@ Option<T> ZipGenerator<U, V, T>::try_get_next() {
 }
 
 template <class U, class V, class T>
-Cardinal ZipGenerator<U, V, T>::estimate_remaining() const {
-    Cardinal first_remaining = first->estimate_remaining();
-    Cardinal second_remaining = second->estimate_remaining();
+Ordinal ZipGenerator<U, V, T>::estimate_remaining() const {
+    Ordinal first_remaining = first->estimate_remaining();
+    Ordinal second_remaining = second->estimate_remaining();
 
     return (first_remaining < second_remaining) ? first_remaining : second_remaining;
 }
@@ -460,10 +503,24 @@ Generator<T>* ZipGenerator<U, V, T>::clone() const {
     return new ZipGenerator<U, V, T>(first->clone(), second->clone(), combiner);
 }
 
+template <class U, class V, class T>
+T ZipGenerator<U, V, T>::get_at(OrdinalIndex idx) const {
+    auto* fo = dynamic_cast<OrdinalIndexable<U>*>(first);
+    auto* so = dynamic_cast<OrdinalIndexable<V>*>(second);
+    if (fo != nullptr && so != nullptr) {
+        return combiner(fo->get_at(idx), so->get_at(idx));
+    }
+    if (idx.omega_part != 0)
+        throw std::logic_error("ZipGenerator::get_at: at least one upstream is not ordinal-indexable");
+    U u = (fo != nullptr) ? fo->get_at(idx) : materialize_at_linear(first, idx.finite_part);
+    V v = (so != nullptr) ? so->get_at(idx) : materialize_at_linear(second, idx.finite_part);
+    return combiner(u, v);
+}
+
 // ================= ConcatGenerator
 
 template <class T>
-ConcatGenerator<T>::ConcatGenerator(Generator<T>* left, Cardinal left_length, Generator<T>* right)
+ConcatGenerator<T>::ConcatGenerator(Generator<T>* left, Ordinal left_length, Generator<T>* right)
     : left(left), left_length(left_length), right(right), pos(0) {
     if (left == nullptr || right == nullptr) throw std::invalid_argument("Nullptr operand in concatenation");
 }
@@ -496,7 +553,7 @@ T ConcatGenerator<T>::get_next() {
     if (!right->has_next()) { throw std::out_of_range("both sides exhausted"); }
 
     pos++;
-    return right->get_next()
+    return right->get_next();
 }
 
 template <class T>
@@ -507,12 +564,12 @@ Option<T> ConcatGenerator<T>::try_get_next() {
 }
 
 template <class T>
-Cardinal ConcatGenerator<T>::estimate_remaining() const {
+Ordinal ConcatGenerator<T>::estimate_remaining() const {
     if (left_length.is_infinite()) {
-        return Cardinal::infinity() + right->estimate_remaining();
+        return Ordinal::infinity() + right->estimate_remaining();
     }
     if (pos < left_length.get_value()) {
-        Cardinal left_remaining = Cardinal::finite(left_length.get_value() - pos);
+        Ordinal left_remaining = Ordinal::finite(left_length.get_value() - pos);
         return left_remaining + right->estimate_remaining();
     }
     return right->estimate_remaining();
@@ -525,23 +582,16 @@ Generator<T>* ConcatGenerator<T>::clone() const {
 
 template <class T>
 T ConcatGenerator<T>::get_at(OrdinalIndex idx) const {
-    if (idx.omega_part == 0) {
-        if (left_length.is_finite()) {
-            size_t left_len = left_length.get_value();
-            if (idx.finite_part >= left_len) {
-                // Перелив в правую часть для конечного left
-                return materialize_at(right, idx.finite_part - left_len);
-            }
-        }
-        return materialize_at(left, idx.finite_part);
+    // Обобщённый алгоритм для трансфинитной конкатенации произвольной глубины:
+    //   idx < left_length  -> в левой
+    //   idx >= left_length -> right.get_at(idx - left_length)
+    // Это позволяет chain'ить concat: concat(concat(inf, inf), inf) даст ω·3,
+    // get(OrdinalIndex{2, k}) рекурсивно через dynamic_cast<OrdinalIndexable>.
+    if (idx < left_length) {
+        return materialize_at_ord(left, idx);
     }
-    if (idx.omega_part == 1) {
-        if (!left_length.is_infinite()) {
-            throw std::logic_error("ConcatGenerator::get_at: omega_part=1 requires infinite left");
-        }
-        return materialize_at(right, idx.finite_part);
-    }
-    throw std::logic_error("ConcatGenerator::get_at: ordinal index beyond omega*2 not supported");
+    OrdinalIndex right_idx = idx - left_length;
+    return materialize_at_ord(right, right_idx);
 }
 
 template <class T>

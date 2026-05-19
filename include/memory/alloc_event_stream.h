@@ -56,7 +56,7 @@ class AllocEventGenerator : public Generator<AllocEvent> {
             return Option<AllocEvent>::Some(get_next());
         }
 
-        Cardinal estimate_remaining() const override { return Cardinal::infinity(); }
+        Ordinal estimate_remaining() const override { return Ordinal::infinity(); }
 
         // Свежая копия с pos=0 и тем же initial_seed
         // Каждый клон выдаёт идентичную последовательность с самого начала

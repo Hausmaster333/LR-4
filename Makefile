@@ -51,7 +51,7 @@ stream_tests: tests/stream_tests.cpp $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/
 	$(CC) $(CFLAGS) $(GTEST_FLAGS) tests/stream_tests.cpp $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc -o stream_tests
 
 ordinal_tests: tests/ordinal_tests.cpp $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc
-	$(CC) $(CFLAGS) $(GTEST_FLAGS) tests/stream_tests.cpp $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc -o ordinal_tests
+	$(CC) $(CFLAGS) $(GTEST_FLAGS) tests/ordinal_tests.cpp $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc -o ordinal_tests
 
 memory_tape_tests: tests/memory_tape_tests.cpp $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc
 	$(CC) $(CFLAGS) $(GTEST_FLAGS) tests/memory_tape_tests.cpp $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc -o memory_tape_tests

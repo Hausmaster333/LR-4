@@ -25,7 +25,7 @@ void DeferredTail<T>::push_concat(const Sequence<T>* other) {
 }
 
 template <class T>
-Cardinal DeferredTail<T>::get_added_length() const {
+Ordinal DeferredTail<T>::get_added_length() const {
     size_t total = 0;
     int op_count = ops.get_count();
 
@@ -39,7 +39,7 @@ Cardinal DeferredTail<T>::get_added_length() const {
         }
     }
 
-    return Cardinal::finite(total);
+    return Ordinal::finite(total);
 }
 
 template <class T>

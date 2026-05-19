@@ -4,10 +4,11 @@
 #include "core/sequence.h"
 #include "core/option.h"
 #include "core/ienumerator.h"
-#include "lazy/cardinal.h"
+#include "lazy/ordinal.h"
 #include "lazy/ordinal_index.h"
 #include "lazy/sliding_cache.h"
 #include "lazy/deferred_tail.h"
+#include "tuples.h"
 #include <functional>
 #include <cstdint>
 
@@ -20,15 +21,21 @@ class LazySequence : public Sequence<T> {
         mutable Generator<T>* generator;
         mutable size_t gen_pos; // Текущая позиция генератора - число выданных элементов
 
-        mutable Cardinal base_length; // Длина части, которую отдаёт generator (без tail)
-        mutable Cardinal length; // base_length + tail.added_length (или infinity)
+        mutable Ordinal base_length; // Длина части, которую отдаёт generator (без tail)
+        mutable Ordinal length; // base_length + tail.added_length (или infinity)
 
         mutable SlidingCache<T> cache; // Ограниченное окно последних материализованных значений
         mutable DeferredTail<T> tail; // Хвост для операций
 
         void materialize_up_to(size_t target_index) const; // Гарантирует, что в кэше есть элемент с таргет idx и пишут в кэш элементы, пока генератор не достигнет target_idx
 
-        LazySequence(Generator<T>* generator, Cardinal base_length, int cache_capacity); // Способ создать LazySequence из готового генератора с base_length, нужен методам, которые знают точные параметры
+        LazySequence(Generator<T>* generator, Ordinal base_length, int cache_capacity); // Способ создать LazySequence из готового генератора с base_length, нужен методам, которые знают точные параметры
+
+        // Собирает "полный" генератор для src: base + материализованный tail в виде ConcatGenerator.
+        // Возвращает (генератор, его полная длина = src.base_length + src.tail.added).
+        // Используется в concat() и insert_at(seq) когда нужно "склеить" base и tail в один поток.
+        // Caller владеет возвращённым генератором.
+        static Pair<Generator<T>*, Ordinal> build_full_generator(LazySequence<T>* src);
 
         template <class U>
         friend LazySequence<U>* make_alloc_event_stream_impl(uint64_t, int, int, int); // Фабрики кастомных потоков, где наследник Generator реализован вручную без RecurrenceGenerator и имеет доступ к private конструктору
@@ -72,14 +79,14 @@ class LazySequence : public Sequence<T> {
         Sequence<T>* slice(int index, int count, const Sequence<T>* replace_seq = nullptr) const override;
         // ==============
 
-        Cardinal get_length() const; // Полная длина (Cardinal: finite(N) или infinity)
+        Ordinal get_length() const; // Полная длина (Ordinal: finite(N) или infinity)
         int get_materialized_count() const; // число материализованных элементов в кэше
         int get_cache_capacity() const; // Максимальная ёмкость кэша
 
         // Геттеры для визуализации внутреннего состояния в UI
-        Cardinal get_base_length() const { return base_length; }
+        Ordinal get_base_length() const { return base_length; }
         int get_tail_op_count() const { return tail.get_op_count(); }
-        Cardinal get_tail_added_length() const { return tail.get_added_length(); }
+        Ordinal get_tail_added_length() const { return tail.get_added_length(); }
 
         // Прямое чтение кэша для визуализатора
         // Эти методы показывают, что уже находится в окне
@@ -91,19 +98,27 @@ class LazySequence : public Sequence<T> {
         // Доступ на чтение к tail (для рендера индивидуальных значений)
         T get_tail_at(int tail_index) const { return tail.get(tail_index); }
 
-        T get(int index); // Чтение элемента по индексу. Материализует кэш до этого индекса, нельзя вызвать по индексу, который вытеснился из кэша
-
-        // Ординальный доступ. {0,k} - просто k-й элемент (как get(int)).
-        // {1,k} - k-й элемент во втором w блоке, например для concat(inf, inf).
-        // Требует, чтобы корневой генератор был ConcatGenerator с infinite left.
-        T get(OrdinalIndex idx);
+        T get(int index); // Линейный геттер
+        T get(OrdinalIndex idx); // Ординальный геттер
 
         LazySequence<T>* get_sub_sequence(int start, int end); // Создает финитную, длиной end - start + 1
         LazySequence<T>* take(int n); // Возвращает новую финитную LazySequence из первых n элементов, начиная с 0 idx. Если кэш сдвинулся, то не будет работать, надо делать reset
 
+        // Трансфинитный take: возвращает LazySequence с длиной = limit.
+        // Если limit.omega_part == 0 - эквивалент take(int) (финитизация в буфер).
+        // Если limit.omega_part > 0 - оборачивает текущий генератор в TakeOrdinalGenerator,
+        //   результат остаётся ленивым (первый ω-блок бесконечен, в финитный буфер не свернётся).
+        //   Требует, чтобы корневой генератор был OrdinalIndexable.
+        LazySequence<T>* take(OrdinalIndex limit);
+
         // this finite + other finite - other добавляется в tail результата, новая LazySeq имеет тот же base и генератор что и this, но бОльший tail и this полностью не материализуется
-        // this finite + other infinite - материализует this в буфер, строит ConcatGenerator в результате бесконечная LazySequence без tail
-        // this infinite + other infinite - throw logic_error, т.к. right никогда не будет достижим, концепция не имеет смысла
+        // this finite + other infinite - материализует this в буфер, строит ConcatGenerator, в результате бесконечная LazySequence
+        // this infinite + other infinite - создаётся ConcatGenerator длины ω·2:
+        //   - линейный get(int) обходит только левую часть (она бесконечна)
+        //   - правая достижима через get(OrdinalIndex{1, k})
+        //   - цепочкой concat можно набирать ω·k для любого k: concat(concat(inf,inf),inf) = ω·3
+        // Если у any из операндов непустой tail, он сохраняется как промежуточная финитная "прослойка"
+        // (ω + n + ω + m = ω·2 + m благодаря левой абсорбции в Ordinal)
         LazySequence<T>* concat(LazySequence<T>* other);
 
         template <class U>

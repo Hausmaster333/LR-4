@@ -14,7 +14,7 @@ LazySequence<T>* make_alloc_event_stream_impl(uint64_t seed, int existing_blocks
     if (alloc_prob_percent > 100) alloc_prob_percent = 100;
 
     AllocEventGenerator* generator = new AllocEventGenerator(seed, existing_blocks_cap, max_alloc_size, alloc_prob_percent);
-    return new LazySequence<T>(generator, Cardinal::infinity(),
+    return new LazySequence<T>(generator, Ordinal::infinity(),
                                 LazySequence<T>::DEFAULT_CACHE_CAPACITY);
 }
 

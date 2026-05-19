@@ -428,7 +428,7 @@ void draw_lazy_window() {
     ImGui::SameLine();
     if (ImGui::Button("Materialize first 32")) {
         int limit = 32;
-        Cardinal length = g_lazy_seq->get_length();
+        Ordinal length = g_lazy_seq->get_length();
         if (length.is_finite() && length.get_value() < static_cast<size_t>(limit)) {
             limit = static_cast<int>(length.get_value());
         }

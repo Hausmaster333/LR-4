@@ -10,8 +10,8 @@ template <class T>
 LazySequence<T>::LazySequence(int cache_capacity)
     : generator(nullptr),
       gen_pos(0),
-      base_length(Cardinal::zero()),
-      length(Cardinal::zero()),
+      base_length(Ordinal::zero()),
+      length(Ordinal::zero()),
       cache(cache_capacity),
       tail() {}
 
@@ -19,8 +19,8 @@ template <class T>
 LazySequence<T>::LazySequence(const T* items, int count, int cache_capacity)
     : generator(nullptr),
       gen_pos(0),
-      base_length(Cardinal::zero()),
-      length(Cardinal::zero()),
+      base_length(Ordinal::zero()),
+      length(Ordinal::zero()),
       cache(cache_capacity),
       tail() {
     if (count < 0) throw std::out_of_range("Count cannot be < 0");
@@ -31,7 +31,7 @@ LazySequence<T>::LazySequence(const T* items, int count, int cache_capacity)
         // SourceGenerator забирает буфер в собственность через own()
         generator = SourceGenerator<T>::own(source);
     }
-    base_length = Cardinal::finite(static_cast<size_t>(count));
+    base_length = Ordinal::finite(static_cast<size_t>(count));
     length = base_length;
 }
 
@@ -39,8 +39,8 @@ template <class T>
 LazySequence<T>::LazySequence(const Sequence<T>* source, int cache_capacity)
     : generator(nullptr),
       gen_pos(0),
-      base_length(Cardinal::zero()),
-      length(Cardinal::zero()),
+      base_length(Ordinal::zero()),
+      length(Ordinal::zero()),
       cache(cache_capacity),
       tail() {
     if (source == nullptr) throw std::invalid_argument("Cannot create from nullptr sequence");
@@ -50,7 +50,7 @@ LazySequence<T>::LazySequence(const Sequence<T>* source, int cache_capacity)
         // Копирующий ctor SourceGenerator сам делает deep-copy source внутрь
         generator = new SourceGenerator<T>(source);
     }
-    base_length = Cardinal::finite(static_cast<size_t>(source_count));
+    base_length = Ordinal::finite(static_cast<size_t>(source_count));
     length = base_length;
 }
 
@@ -60,15 +60,15 @@ LazySequence<T>::LazySequence(std::function<T(Sequence<T>*)> rule,
                               int cache_capacity)
     : generator(nullptr),
       gen_pos(0),
-      base_length(Cardinal::infinity()),
-      length(Cardinal::infinity()),
+      base_length(Ordinal::infinity()),
+      length(Ordinal::infinity()),
       cache(cache_capacity),
       tail() {
     generator = new RecurrenceGenerator<T>(rule, initial);
 }
 
 template <class T>
-LazySequence<T>::LazySequence(Generator<T>* generator, Cardinal base_length, int cache_capacity)
+LazySequence<T>::LazySequence(Generator<T>* generator, Ordinal base_length, int cache_capacity)
     : generator(generator),
       gen_pos(generator != nullptr ? generator->position() : 0),
       base_length(base_length),
@@ -82,12 +82,40 @@ LazySequence<T>::~LazySequence() {
 }
 
 template <class T>
+Pair<Generator<T>*, Ordinal> LazySequence<T>::build_full_generator(LazySequence<T>* src) {
+    using FullPair = Pair<Generator<T>*, Ordinal>;
+    bool tail_empty = src->tail.is_empty();
+
+    if (src->generator == nullptr) {
+        // Пустая base: full = source из tail (если непуст), либо ничего.
+        if (tail_empty) return FullPair(nullptr, Ordinal::zero());
+        MutableArraySequence<T>* buf = new MutableArraySequence<T>();
+        int n = static_cast<int>(src->tail.get_added_length().get_value());
+        for (int i = 0; i < n; i++) buf->append(src->tail.get(i));
+        return FullPair(SourceGenerator<T>::own(buf),
+                        Ordinal::finite(static_cast<size_t>(n)));
+    }
+    if (tail_empty) {
+        return FullPair(src->generator->clone(), src->base_length);
+    }
+    // base + tail через ConcatGenerator(base_clone, base_length, SourceGen из tail).
+    MutableArraySequence<T>* buf = new MutableArraySequence<T>();
+    int n = static_cast<int>(src->tail.get_added_length().get_value());
+    for (int i = 0; i < n; i++) buf->append(src->tail.get(i));
+    Generator<T>* tail_gen = SourceGenerator<T>::own(buf);
+    Generator<T>* base_clone = src->generator->clone();
+    Generator<T>* full = new ConcatGenerator<T>(base_clone, src->base_length, tail_gen);
+    Ordinal full_len = src->base_length + Ordinal::finite(static_cast<size_t>(n));
+    return FullPair(full, full_len);
+}
+
+template <class T>
 void LazySequence<T>::sys_append(const T& item) {
     if (length.is_infinite()) {
         throw std::logic_error("sys_append on infinite LazySequence has no meaning");
     }
     tail.push_append(item);
-    length = length + Cardinal::finite(1);
+    length = length + Ordinal::finite(1);
 }
 
 template <class T>
@@ -112,7 +140,7 @@ void LazySequence<T>::materialize_up_to(size_t target_index) const {
     while (gen_pos <= target_index) {
         if (!generator->has_next()) {
             // Generator кончился раньше, чем мы ожидали - уточняем длины
-            base_length = Cardinal::finite(gen_pos);
+            base_length = Ordinal::finite(gen_pos);
             length = base_length + tail.get_added_length();
             throw std::out_of_range("LazySequence: ran out of elements");
         }
@@ -232,7 +260,7 @@ Sequence<T>* LazySequence<T>::slice(int, int, const Sequence<T>*) const {
 }
 
 template <class T>
-Cardinal LazySequence<T>::get_length() const {
+Ordinal LazySequence<T>::get_length() const {
     return length;
 }
 
@@ -260,9 +288,19 @@ T LazySequence<T>::get(int index) {
         return tail.get(static_cast<int>(logical_index - base_length.get_value()));
     }
 
-    // Base-зона - материализуем через generator + кэш
-    materialize_up_to(logical_index);
-    return cache.get(logical_index);
+    // Base-зона - если кэш ещё содержит индекс (или может его материализовать), используем его.
+    // Иначе пробуем ординальный доступ через OrdinalIndexable (для concat/insert и любого
+    // генератора, форвардящего get_at). Это нужно, чтобы после линейного прохода вперёд
+    // можно было читать любую позицию без перестройки кэша.
+    if (cache.is_empty() || logical_index >= cache.get_first_index()) {
+        materialize_up_to(logical_index);
+        return cache.get(logical_index);
+    }
+    auto* indexable = dynamic_cast<OrdinalIndexable<T>*>(generator);
+    if (indexable != nullptr) {
+        return indexable->get_at(OrdinalIndex(0, logical_index));
+    }
+    throw std::out_of_range("LazySequence: index already evicted from cache and generator is not ordinal-indexable");
 }
 
 template <class T>
@@ -275,28 +313,22 @@ T LazySequence<T>::get(OrdinalIndex idx) {
         return get(static_cast<int>(idx.finite_part));
     }
 
-    // omega_part >= 1: длина должна допускать столько ω-блоков.
-    // omega_count показывает, сколько полных ω-блоков есть в длине, плюс finite_part
-    // - это финитный хвост в (omega_count)-м ω-блоке.
-    // Допустимые omega_part: [0..omega_count]. На omega_part == omega_count
-    // доступен только хвост длины length.get_finite_part().
-    if (idx.omega_part > length.get_omega_count()) {
+    // omega_part >= 1: проверяем что индекс в допустимом диапазоне длины.
+    // Длина имеет вид ω·omega_count + finite_part. Допустимы все idx < length.
+    // Верхней границы на omega_count больше нет — поддерживается ω·k для любого k
+    // (chained concat'ы могут давать ω·3, ω·4 и так далее).
+    if (!(idx < length)) {
         throw std::out_of_range("Lazy sequence ordinal index beyond length");
     }
-    if (idx.omega_part == length.get_omega_count() &&
-        idx.finite_part >= length.get_finite_part()) {
-        throw std::out_of_range("Lazy sequence ordinal index beyond tail of last omega block");
-    }
 
-    // Ординальный доступ работает только если корневой генератор - ConcatGenerator.
-    // Создаётся методом concat(inf, inf).
-    // Ординальный доступ работает для любого генератора, реализующего OrdinalIndexable
-    // (сейчас это ConcatGenerator и InsertAtGenerator).
+    // Ординальный доступ работает для любого корневого генератора, реализующего OrdinalIndexable:
+    // ConcatGenerator, InsertAtGenerator, MapGenerator, ZipGenerator, SourceGenerator, PrependGenerator.
+    // WhereGenerator НЕ поддерживается (фильтрация делает индексы недетерминированными).
     auto* indexable = dynamic_cast<OrdinalIndexable<T>*>(generator);
     if (indexable == nullptr) {
         throw std::logic_error(
             "Lazy sequence: ordinal index requires an ordinal-aware root generator "
-            "(use concat() or insert_at() to combine infinite sequences first)"
+            "(WhereGenerator is the only non-indexable; use concat/insert/map/zip)"
         );
     }
     return indexable->get_at(idx);
@@ -306,7 +338,7 @@ template <class T>
 LazySequence<T>* LazySequence<T>::take(int n) {
     if (n < 0) throw std::out_of_range("take: n must be >= 0");
 
-    Cardinal n_cardinal = Cardinal::finite(static_cast<size_t>(n));
+    Ordinal n_cardinal = Ordinal::finite(static_cast<size_t>(n));
     // Требуем, чтобы base покрывал N - тогда мы можем взять первые N элементов из base, а потом dock tail. На бесконечной всегда хватает
     if (base_length < n_cardinal) throw std::out_of_range("take: not enough base elements");
 
@@ -323,9 +355,28 @@ LazySequence<T>* LazySequence<T>::take(int n) {
     // Бесконечная становится конечной - отложенный хвост применяется в конец
     tail.apply_to(*buffer);
 
-    Cardinal new_length = n_cardinal + tail.get_added_length();
+    Ordinal new_length = n_cardinal + tail.get_added_length();
     Generator<T>* new_generator = SourceGenerator<T>::own(buffer);
     return new LazySequence<T>(new_generator, new_length, cache.get_capacity());
+}
+
+template <class T>
+LazySequence<T>* LazySequence<T>::take(OrdinalIndex limit) {
+    if (limit.omega_part == 0) {
+        return take(static_cast<int>(limit.finite_part));
+    }
+    // Трансфинитная обрезка: оборачиваем в TakeOrdinalGenerator, длина = limit как Ordinal.
+    if (generator == nullptr) throw std::logic_error("take(OrdinalIndex): generator is empty");
+    auto* indexable = dynamic_cast<OrdinalIndexable<T>*>(generator);
+    if (indexable == nullptr) {
+        throw std::logic_error("take(OrdinalIndex): generator is not ordinal-indexable");
+    }
+    Ordinal limit_ord = Ordinal::omega_times(limit.omega_part) + Ordinal::finite(limit.finite_part);
+    if (!(limit_ord <= length)) {
+        throw std::out_of_range("take(OrdinalIndex): limit exceeds sequence length");
+    }
+    Generator<T>* wrapped = new TakeOrdinalGenerator<T>(generator->clone(), limit);
+    return new LazySequence<T>(wrapped, limit_ord, cache.get_capacity());
 }
 
 template <class T>
@@ -340,7 +391,7 @@ LazySequence<T>* LazySequence<T>::get_sub_sequence(int start, int end) {
 
     Generator<T>* new_generator = SourceGenerator<T>::own(buffer);
     return new LazySequence<T>(new_generator,
-                               Cardinal::finite(static_cast<size_t>(end - start + 1)),
+                               Ordinal::finite(static_cast<size_t>(end - start + 1)),
                                cache.get_capacity());
 }
 
@@ -350,7 +401,7 @@ LazySequence<T>* LazySequence<T>::append(const T& item) {
     LazySequence<T>* result = new LazySequence<T>(new_generator, base_length, cache.get_capacity());
     result->tail = tail;
     result->tail.push_append(item);
-    result->length = length + Cardinal::finite(1);
+    result->length = length + Ordinal::finite(1);
 
     return result;
 }
@@ -362,18 +413,20 @@ LazySequence<T>* LazySequence<T>::prepend(const T& item) {
         T single_item[1] = { item };
         LazySequence<T>* result = new LazySequence<T>(single_item, 1, cache.get_capacity());
         result->tail = tail;
-        result->length = Cardinal::finite(1) + tail.get_added_length();
+        result->length = Ordinal::finite(1) + tail.get_added_length();
 
         return result;
     }
 
     Generator<T>* base_generator_clone = generator->clone();
     Generator<T>* new_generator = new PrependGenerator<T>(item, base_generator_clone);
-    Cardinal new_base_length = base_length + Cardinal::finite(1);
+    // Элемент идёт ПЕРЕД базой: 1 + base_length с левой абсорбцией финита.
+    // Для finite N: 1 + N. Для infinite: 1 + ω = ω (omega_count и finite_part не растут).
+    Ordinal new_base_length = Ordinal::finite(1) + base_length;
 
     LazySequence<T>* result = new LazySequence<T>(new_generator, new_base_length, cache.get_capacity());
     result->tail = tail;
-    result->length = length + Cardinal::finite(1);
+    result->length = Ordinal::finite(1) + length;
 
     return result;
 }
@@ -399,11 +452,13 @@ LazySequence<T>* LazySequence<T>::insert_at(const T& item, int index) {
         }
         Generator<T>* base_generator_clone = generator->clone();
         Generator<T>* new_generator = new InsertAtGenerator<T>(target_index, item, base_generator_clone);
-        Cardinal new_base_length = base_length + Cardinal::finite(1);
+        // Вставка ВНУТРИ базы: ординально target_index + 1 + (base - target_index) = ...
+        // Для финитной базы это base + 1. Для бесконечной — абсорбируется: 1 + ω = ω.
+        Ordinal new_base_length = Ordinal::finite(1) + base_length;
 
         LazySequence<T>* result = new LazySequence<T>(new_generator, new_base_length, cache.get_capacity());
         result->tail = tail;
-        result->length = length + Cardinal::finite(1);
+        result->length = Ordinal::finite(1) + length;
 
         return result;
     }
@@ -422,79 +477,68 @@ LazySequence<T>* LazySequence<T>::insert_at(LazySequence<T>* other, int index) {
 
     size_t target_index = static_cast<size_t>(index);
 
-    // Если позиция вставки в tail-зоне финитной this - не поддерживаем (как и в одноэлементной версии)
+    // Вставка в tail-зону финитной this пока не поддержана (как и в одноэлементной версии).
     if (base_length.is_finite() && target_index > base_length.get_value()) {
         throw std::logic_error("insert_at(seq): tail-zone insertion not implemented");
     }
 
-    if (generator == nullptr) {
-        // Если index==0 - результат просто other (склонированный)
-        // Финитная пустая this + other -> копия other
-        if (target_index != 0) {
-            throw std::logic_error("insert_at(seq): empty base, non-zero index");
-        }
-        Generator<T>* other_gen = (other->generator != nullptr) ? other->generator->clone() : nullptr;
-        LazySequence<T>* result = new LazySequence<T>(other_gen, other->length, cache.get_capacity());
-        result->tail = other->tail;
-        result->length = other->length + tail.get_added_length();
-        // Tail this остаётся в конце - копируем
-        // (примечание: при пустой base tail this и так представляет всю this)
+    // Если other бесконечен И у this непустой tail - корректно представить нельзя:
+    // тailу this пришлось бы лежать после omega-блока other, а наша структура (base + DeferredTail)
+    // финитный tail только в конце выражает. Просим пользователя сначала финитизировать через take().
+    if (other->length.is_infinite() && !tail.is_empty()) {
+        throw std::logic_error(
+            "insert_at(seq): cannot insert infinite sequence into this with non-empty tail; "
+            "call take(N) first to finitize"
+        );
+    }
+
+    // Собираем "полный" generator для other (base + материализованный tail).
+    // Это устраняет рассинхрон между injected generator (только base) и injected_length (= base + tail).
+    using FullPair = Pair<Generator<T>*, Ordinal>;
+    FullPair other_full = build_full_generator(other);
+    Generator<T>* inj_full = other_full.first();
+    Ordinal inj_full_len = other_full.second();
+
+    // Пустой other - результат это копия this.
+    if (inj_full == nullptr) {
+        Generator<T>* this_clone = (generator != nullptr) ? generator->clone() : nullptr;
+        LazySequence<T>* result = new LazySequence<T>(this_clone, base_length, cache.get_capacity());
+        result->tail = tail;
+        result->length = length;
         return result;
     }
 
-    Generator<T>* up_clone = generator->clone();
-    Generator<T>* inj_clone = (other->generator != nullptr) ? other->generator->clone() : nullptr;
-
-    // Если у other пустая база и есть только tail - материализуем tail в одноразовый источник
-    if (inj_clone == nullptr) {
-        size_t other_len = other->length.is_finite() ? other->length.get_value() : 0;
-        if (other_len == 0) {
-            // Вставка пустой последовательности = копия this
-            delete up_clone;
-            Generator<T>* this_clone = generator->clone();
-            LazySequence<T>* result = new LazySequence<T>(this_clone, base_length, cache.get_capacity());
-            result->tail = tail;
-            result->length = length;
-            return result;
+    // Пустой this - результат = other_full с this.tail в конце.
+    if (generator == nullptr) {
+        if (target_index != 0) {
+            delete inj_full;
+            throw std::logic_error("insert_at(seq): empty base, non-zero index");
         }
-        MutableArraySequence<T>* buf = new MutableArraySequence<T>();
-        for (size_t i = 0; i < other_len; i++) {
-            buf->append(other->tail.get(static_cast<int>(i)));
-        }
-        inj_clone = SourceGenerator<T>::own(buf);
+        LazySequence<T>* result = new LazySequence<T>(inj_full, inj_full_len, cache.get_capacity());
+        result->tail = tail;
+        result->length = inj_full_len + tail.get_added_length();
+        return result;
     }
 
+    // Общий случай: this.base[0..p) + inj_full + this.base[p..end_base) + this.tail.
+    // Линейный режим: InsertAtGenerator обходит base/injected/base линейно.
+    // Ординальный режим: get_at форвардит через OrdinalIndexable.
+    Generator<T>* this_base_clone = generator->clone();
     Generator<T>* new_generator = new InsertAtGenerator<T>(
-        target_index, inj_clone, other->length, up_clone
+        target_index, inj_full, inj_full_len, this_base_clone
     );
 
-    // Длина результата: this[0..k) + other + this[k..)
-    // - other финитен длины m -> длина = this.length + m
-    // - other бесконечен:
-    // * this финитен длины n: k + w + (n-k) = w + (n-k)
-    // * this бесконечен: w + w = w * 2 (хвост this уходит за 1-й ω-блок)
-    Cardinal new_length = Cardinal::zero();
-    if (other->length.is_finite()) {
-        new_length = length + other->length;
-    } else {
-        // other бесконечен. Сколько от this остаётся справа?
-        if (length.is_finite()) {
-            size_t tail_n = length.get_value() - target_index;
-            new_length = Cardinal::infinity() + Cardinal::finite(tail_n);
-        } else {
-            // this тоже бесконечен -> w * 2
-            new_length = Cardinal::infinity() + Cardinal::infinity();
-        }
-    }
-    Cardinal new_base_length = new_length;  // tail у нового результата пуст
+    // Длина базы результата по ординальной арифметике:
+    //   new_base = p + inj_full_len + (base_length - p)
+    // Эта формула универсальна и даёт правильный ответ для всех 4 комбинаций
+    // финитности this/other (см. docs/architecture.md, раздел insert_at).
+    Ordinal p_ord = Ordinal::finite(target_index);
+    Ordinal remainder = base_length - p_ord;
+    Ordinal new_base_length = p_ord + inj_full_len + remainder;
 
     LazySequence<T>* result = new LazySequence<T>(new_generator, new_base_length, cache.get_capacity());
-    // Tail this: для бесконечного other он недостижим линейно (но достижим как get({1, k}) на хвосте upstream)
-    // Для финитного other он остаётся в конце результата.
-    if (other->length.is_finite()) {
-        result->tail = tail;
-    }
-    result->length = new_length;
+    result->tail = tail;
+    result->length = new_base_length + tail.get_added_length();
 
     return result;
 }
@@ -503,50 +547,44 @@ template <class T>
 LazySequence<T>* LazySequence<T>::concat(LazySequence<T>* other) {
     if (other == nullptr) throw std::invalid_argument("concat: other is nullptr");
 
-    if (length.is_infinite() && other->length.is_infinite()) {
-        // w + w = w * 2 через ординальный доступ.
-        // Линейный get(int) останется работать только для левой части
-        // (она бесконечна и до правой никогда не дойдём), а
-        // get(OrdinalIndex{1, k}) даст прямой доступ к k-му элементу правой.
-        Generator<T>* left_clone = this->generator->clone();
-        Generator<T>* right_clone = other->generator->clone();
-        Generator<T>* new_generator = new ConcatGenerator<T>(
-            left_clone, this->length, right_clone
-        );
-        Cardinal total = this->length + other->length;  // w * 1 + w * 1 = w * 2
-        return new LazySequence<T>(new_generator, total, cache.get_capacity());
-    }
-
-    if (other->length.is_infinite()) {
-        // this finite, other infinite - собираем ConcatGenerator
-        // Сначала материализуем this целиком (включая tail) в this_buffer
-        size_t this_length = length.get_value();
-        MutableArraySequence<T>* this_buffer = new MutableArraySequence<T>();
-        for (size_t index = 0; index < this_length; index++) {
-            this_buffer->append(get(static_cast<int>(index)));
+    // Финитный this + финитный other: складываем other в tail (быстрый путь без копирования this).
+    if (length.is_finite() && other->length.is_finite()) {
+        size_t other_length = other->length.get_value();
+        MutableArraySequence<T> other_buffer;
+        for (size_t index = 0; index < other_length; index++) {
+            other_buffer.append(other->get(static_cast<int>(index)));
         }
 
-        Generator<T>* this_generator = SourceGenerator<T>::own(this_buffer);
-        Generator<T>* other_generator = other->generator->clone();
-        Generator<T>* new_generator = new ConcatGenerator<T>(this_generator, length, other_generator);
+        Generator<T>* new_generator = (generator != nullptr) ? generator->clone() : nullptr;
+        LazySequence<T>* result = new LazySequence<T>(new_generator, base_length, cache.get_capacity());
+        result->tail = tail;
+        result->tail.push_concat(&other_buffer);
+        result->length = length + Ordinal::finite(other_length);
 
-        return new LazySequence<T>(new_generator, Cardinal::infinity(), cache.get_capacity());
+        return result;
     }
 
-    // other finite - складываем в tail
-    size_t other_length = other->length.get_value();
-    MutableArraySequence<T> other_buffer;
-    for (size_t index = 0; index < other_length; index++) {
-        other_buffer.append(other->get(static_cast<int>(index)));
+    // Хотя бы один операнд бесконечен - строим chained ConcatGenerator
+    // с tail-прослойками между base и следующим оператором.
+    // Это даёт ω·k для любого k через цепочки concat: concat(concat(inf,inf),inf) = ω·3.
+    using FullPair = Pair<Generator<T>*, Ordinal>;
+    FullPair this_full_pair = build_full_generator(this);
+    FullPair other_full_pair = build_full_generator(other);
+
+    if (this_full_pair.first() == nullptr) {
+        // this пуст - результат это просто other_full
+        if (other_full_pair.first() == nullptr) return new LazySequence<T>(cache.get_capacity());
+        return new LazySequence<T>(other_full_pair.first(), other_full_pair.second(), cache.get_capacity());
+    }
+    if (other_full_pair.first() == nullptr) {
+        return new LazySequence<T>(this_full_pair.first(), this_full_pair.second(), cache.get_capacity());
     }
 
-    Generator<T>* new_generator = (generator != nullptr) ? generator->clone() : nullptr;
-    LazySequence<T>* result = new LazySequence<T>(new_generator, base_length, cache.get_capacity());
-    result->tail = tail; // Копируем старый tail this
-    result->tail.push_concat(&other_buffer); // Добавляем other в конец tail
-    result->length = length + Cardinal::finite(other_length);
-
-    return result;
+    Generator<T>* new_generator = new ConcatGenerator<T>(
+        this_full_pair.first(), this_full_pair.second(), other_full_pair.first()
+    );
+    Ordinal total = this_full_pair.second() + other_full_pair.second();
+    return new LazySequence<T>(new_generator, total, cache.get_capacity());
 }
 
 template <class T>
@@ -575,17 +613,22 @@ LazySequence<T>* LazySequence<T>::where(std::function<bool(const T&)> pred) {
     if (generator != nullptr) {
         new_generator = new WhereGenerator<T>(generator->clone(), pred);
     }
-    // Длина where неизвестна - оставляем infinity (точное число знаем только после полной материализации, что невозможно для бесконечной)
-    Cardinal new_base_length = Cardinal::infinity();
+    // Длина where точно неизвестна без полной материализации.
+    // Используем верхнюю границу = base_length (для любого case: финитного, ω, ω·k).
+    // Реальный count может быть меньше.
+    Ordinal new_base_length = base_length;
     LazySequence<T>* result = new LazySequence<T>(new_generator, new_base_length, cache.get_capacity());
 
-    // Фильтруем tail через pred
+    // Фильтруем tail через pred. Tail материализуется eagerly - фильтр применяется здесь.
     int tail_count = tail.get_op_count() > 0 ? static_cast<int>(tail.get_added_length().get_value()) : 0;
     for (int index = 0; index < tail_count; index++) {
         T item = tail.get(index);
         if (pred(item)) result->tail.push_append(item);
     }
-    result->length = Cardinal::infinity();
+    // length = base upper-bound + actual filtered tail count.
+    // Для финитной this: upper bound по base + точный счёт по tail.
+    // Для бесконечной: ω + k (где k - отфильтрованный tail), консистентно с append на бесконечной.
+    result->length = new_base_length + result->tail.get_added_length();
 
     return result;
 }
@@ -604,9 +647,9 @@ LazySequence<R>* LazySequence<T>::zip(LazySequence<U>* other,
     Generator<U>* b_generator = other->generator->clone();
     Generator<R>* new_generator = new ZipGenerator<T, U, R>(a_generator, b_generator, combiner);
 
-    Cardinal new_length = Cardinal::zero();
+    Ordinal new_length = Ordinal::zero();
     if (base_length.is_infinite() && other->base_length.is_infinite()) {
-        new_length = Cardinal::infinity();
+        new_length = Ordinal::infinity();
     } else if (base_length.is_infinite()) {
         new_length = other->base_length;
     } else if (other->base_length.is_infinite()) {

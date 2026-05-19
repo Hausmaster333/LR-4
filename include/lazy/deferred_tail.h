@@ -3,7 +3,7 @@
 
 #include "core/sequence.h"
 #include "core/ienumerator.h"
-#include "lazy/cardinal.h"
+#include "lazy/ordinal.h"
 
 // Хвост отложенных операций над концом ленивой последовательности
 // Хранит упорядоченный список операций (AppendOne / ConcatSeq), применяется к концу при take(N) или при выходе индекса за base_length
@@ -41,7 +41,7 @@ class DeferredTail {
         void push_concat(const Sequence<T>* other); // Кладёт целую последовательность в конец (операция ConcatSeq), копирует элементы внутрь, исходник можно удалять после вызов
 
         int get_op_count() const { return ops.get_count(); } // Число операций в очереди (не общее число элементов)
-        Cardinal get_added_length() const; // Число элементов, которое прибавится к последовательности
+        Ordinal get_added_length() const; // Число элементов, которое прибавится к последовательности
 
         // Обходит ops, тратя tail_index на каждый Op (1 на AppendOne, длина seq на ConcatSeq)
         T get(int tail_index) const; // Возвращает элемент по абсолютному индексу внутри tail от 0 до get_added_length - 1
