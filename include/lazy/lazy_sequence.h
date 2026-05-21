@@ -4,34 +4,24 @@
 #include "core/sequence.h"
 #include "core/option.h"
 #include "core/ienumerator.h"
-#include "lazy/cardinal.h"
-#include "lazy/ordinal_index.h"
+#include "lazy/ordinal.h"
 #include "lazy/sliding_cache.h"
-#include "lazy/deferred_tail.h"
 #include <functional>
 #include <cstdint>
 
-template <class T> class Generator; // Пишем, потому что не надо полный include, его делаем перед tpp файлом, чтобы избежать циклических зависимостей
+template <class T> class Generator;
 
 template <class T>
 class LazySequence : public Sequence<T> {
     private:
-        // mutable чтобы могли менять поле в const методах
+        // mutable - материализация в const методах меняет внутреннее состояние
         mutable Generator<T>* generator;
-        mutable size_t gen_pos; // Текущая позиция генератора - число выданных элементов
+        mutable size_t gen_pos;         // сколько уже выдано генератором
+        mutable Ordinal length;         // полная длина
+        mutable SlidingCache<T> cache;  // окно последних материализованных значений
 
-        mutable Cardinal base_length; // Длина части, которую отдаёт generator (без tail)
-        mutable Cardinal length; // base_length + tail.added_length (или infinity)
+        void materialize_up_to(size_t target_index) const;
 
-        mutable SlidingCache<T> cache; // Ограниченное окно последних материализованных значений
-        mutable DeferredTail<T> tail; // Хвост для операций
-
-        void materialize_up_to(size_t target_index) const; // Гарантирует, что в кэше есть элемент с таргет idx и пишут в кэш элементы, пока генератор не достигнет target_idx
-
-        LazySequence(Generator<T>* generator, Cardinal base_length, int cache_capacity); // Способ создать LazySequence из готового генератора с base_length, нужен методам, которые знают точные параметры
-
-        template <class U>
-        friend LazySequence<U>* make_alloc_event_stream_impl(uint64_t, int, int, int); // Фабрики кастомных потоков, где наследник Generator реализован вручную без RecurrenceGenerator и имеет доступ к private конструктору
     protected:
         void sys_append(const T& item) override;
         Sequence<T>* CreateEmpty() const override;
@@ -43,25 +33,25 @@ class LazySequence : public Sequence<T> {
         LazySequence(const Sequence<T>* source, int cache_capacity = DEFAULT_CACHE_CAPACITY);
         LazySequence(std::function<T(Sequence<T>*)> rule, const Sequence<T>* initial, int cache_capacity = DEFAULT_CACHE_CAPACITY);
 
+        // Конструктор из готового generator-а с заявленной длиной. Используется derive-операциями
+        // и фабриками кастомных стримов (например, make_alloc_event_stream).
+        LazySequence(Generator<T>* generator, Ordinal length, int cache_capacity = DEFAULT_CACHE_CAPACITY);
+
         LazySequence(const LazySequence& other) = delete;
         LazySequence& operator=(const LazySequence& other) = delete;
 
         const T& get_first() const override;
         Option<T> try_get_first() const override;
 
-        int get_count() const override; // Полная длина (только для финитных, throw на infinite)
+        int get_count() const override;
 
-        // На бесконечной в хвост добавляем, на финитной материализуется в конец 
-        LazySequence<T>* append(const T& item) override;
+        LazySequence<T>* append(const T& item) override; // На inf item_idx = (w, 0)
         LazySequence<T>* prepend(const T& item) override;
         LazySequence<T>* insert_at(const T& item, int index) override;
-
-        // Вставка последовательности (финитной или бесконечной) в позицию index.
-        // Все 4 комбинации (this finite/inf × other finite/inf) поддержаны.
-        // При insert(inf, k, inf) длина результата = ω·2, хвост this доступен через get(OrdinalIndex{1, k}).
+        // Длина по универсальной ординальной формуле: p + other.length + (this.length - p).
         LazySequence<T>* insert_at(LazySequence<T>* other, int index);
 
-        // ========= Бросают logic_error с указанием подходящего метода-замены
+        // ========= throw logic_error
         const T& get_last() const override;
         Option<T> try_get_last() const override;
         Sequence<T>* get_sub_sequence(int start, int end) const override;
@@ -72,53 +62,42 @@ class LazySequence : public Sequence<T> {
         Sequence<T>* slice(int index, int count, const Sequence<T>* replace_seq = nullptr) const override;
         // ==============
 
-        Cardinal get_length() const; // Полная длина (Cardinal: finite(N) или infinity)
-        int get_materialized_count() const; // число материализованных элементов в кэше
-        int get_cache_capacity() const; // Максимальная ёмкость кэша
+        Ordinal get_length() const;
+        int get_materialized_count() const;
+        int get_cache_capacity() const;
 
-        // Геттеры для визуализации внутреннего состояния в UI
-        Cardinal get_base_length() const { return base_length; }
-        int get_tail_op_count() const { return tail.get_op_count(); }
-        Cardinal get_tail_added_length() const { return tail.get_added_length(); }
-
-        // Прямое чтение кэша для визуализатора
-        // Эти методы показывают, что уже находится в окне
         bool is_cache_empty() const { return cache.is_empty(); }
         size_t get_cache_first_index() const { return cache.get_first_index(); }
         size_t get_cache_last_index() const { return cache.get_last_index(); }
         const T& get_cache_at(size_t logical_index) const { return cache.get(logical_index); }
 
-        // Доступ на чтение к tail (для рендера индивидуальных значений)
-        T get_tail_at(int tail_index) const { return tail.get(tail_index); }
+        T get(int index);
+        T get(Ordinal idx);
 
-        T get(int index); // Чтение элемента по индексу. Материализует кэш до этого индекса, нельзя вызвать по индексу, который вытеснился из кэша
+        LazySequence<T>* get_sub_sequence(int start, int end);
 
-        // Ординальный доступ. {0,k} - просто k-й элемент (как get(int)).
-        // {1,k} - k-й элемент во втором w блоке, например для concat(inf, inf).
-        // Требует, чтобы корневой генератор был ConcatGenerator с infinite left.
-        T get(OrdinalIndex idx);
+        LazySequence<T>* take(int n);     // Финитизация первых n элементов в SourceGen.
+        LazySequence<T>* take(Ordinal limit);  // Для omega_part > 0 - просто новый LazySequence с ограниченной длиной (без доп. wrapper-генератора).
 
-        LazySequence<T>* get_sub_sequence(int start, int end); // Создает финитную, длиной end - start + 1
-        LazySequence<T>* take(int n); // Возвращает новую финитную LazySequence из первых n элементов, начиная с 0 idx. Если кэш сдвинулся, то не будет работать, надо делать reset
-
-        // this finite + other finite - other добавляется в tail результата, новая LazySeq имеет тот же base и генератор что и this, но бОльший tail и this полностью не материализуется
-        // this finite + other infinite - материализует this в буфер, строит ConcatGenerator в результате бесконечная LazySequence без tail
-        // this infinite + other infinite - throw logic_error, т.к. right никогда не будет достижим, концепция не имеет смысла
+        // concat(other): универсальная цепочка ConcatGenerator(this.gen, this.length, other.gen).
+        // Длина = this.length + other.length (ординально). Цепочки concat дают ω·k.
         LazySequence<T>* concat(LazySequence<T>* other);
 
         template <class U>
-        LazySequence<U>* map(std::function<U(const T&)> func); // Применяет func к каждому элементу, выдаёт LazySequence длиной this (включая tail). Элементы строятся через MapGenerator
+        LazySequence<U>* map(std::function<U(const T&)> func);
 
-        LazySequence<T>* where(std::function<bool(const T&)> pred); // Длина всегда base_length = infinity, точная длина не известна без полной материализации
+        // where(pred): длина = base upper bound; реальное число известно только при материализации.
+        LazySequence<T>* where(std::function<bool(const T&)> pred);
 
         template <class U, class R>
-        LazySequence<R>* zip(LazySequence<U>* other, std::function<R(const T&, const U&)> combiner); // Комбинация this и other через combiner длиной min(длины обоих, считая infinity бесконечной)
+        LazySequence<R>* zip(LazySequence<U>* other, std::function<R(const T&, const U&)> combiner);
 
-        T reduce(std::function<T(const T&, const T&)> f, const T& initial); // Только для финитных
+        T reduce(std::function<T(const T&, const T&)> f, const T& initial);
 
         ~LazySequence() override;
-        // Адаптер LazySequence -> IEnumerator. move_next лениво материализует следующий индекс через owner->get(index). 
-        // reset формально работает, но если кэш уже сдвинулся то следующий move_next упадёт
+
+        // Адаптер LazySequence -> IEnumerator. move_next лениво материализует через owner->get(index).
+        // Корректно ловит out_of_range при exhaustion (потенциально-бесконечные потоки).
         class Enumerator : public IEnumerator<T> {
             private:
                 LazySequence<T>* owner;

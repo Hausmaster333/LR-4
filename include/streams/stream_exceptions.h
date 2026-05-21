@@ -9,11 +9,6 @@ struct EndOfStream : public std::runtime_error {
     EndOfStream() : std::runtime_error("End of stream reached") {}
 };
 
-// Stream не поддерживает seek
-struct SeekUnsupported : public std::logic_error {
-    SeekUnsupported() : std::logic_error("Stream does not support seek") {}
-};
-
 // Попытка seek в уже прочитанную позицию у потока, который не умеет назад
 struct GoBackUnsupported : public std::logic_error {
     GoBackUnsupported() : std::logic_error("Stream does not support going back") {}

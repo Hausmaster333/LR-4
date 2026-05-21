@@ -12,7 +12,7 @@ LazyReadStream<T>::LazyReadStream(LazySequence<T>* source)
 
 template <class T>
 bool LazyReadStream<T>::is_end_of_stream() const {
-    Cardinal length = source->get_length();
+    Ordinal length = source->get_length();
     if (length.is_infinite()) return false;
 
     return this->position >= length.get_value();
@@ -34,7 +34,7 @@ size_t LazyReadStream<T>::seek(size_t index) {
     if (!this->is_open) throw StreamNotOpen();
     if (index < this->position) throw GoBackUnsupported();
 
-    Cardinal length = source->get_length();
+    Ordinal length = source->get_length();
     if (length.is_finite() && index > length.get_value()) {
         index = length.get_value();
     }

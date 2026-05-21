@@ -66,13 +66,11 @@ void SlidingCache<T>::push(const T& item) {
     }
 
     if (count < capacity) {
-        // Окно ещё не заполнено - просто дописываем после last_logical_index
         int new_physical_index = (first_physical_index + count) % capacity;
         buffer.set(new_physical_index, item);
         last_logical_index++;
         count++;
     } else {
-        // Окно заполнено - пишем поверх first_physical_index, сдвигаем окно вправо
         buffer.set(first_physical_index, item);
         first_physical_index = (first_physical_index + 1) % capacity;
         first_logical_index++;

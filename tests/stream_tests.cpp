@@ -19,10 +19,6 @@ TEST(StreamExceptionsTest, TypesDistinct) {
         catch (const std::runtime_error&) {}
     });
     EXPECT_NO_THROW({
-        try { throw SeekUnsupported(); }
-        catch (const std::logic_error&) {}
-    });
-    EXPECT_NO_THROW({
         try { throw GoBackUnsupported(); }
         catch (const std::logic_error&) {}
     });
