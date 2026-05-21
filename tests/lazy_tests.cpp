@@ -417,7 +417,9 @@ TEST(LazySequenceTest, AppendOnInfinite_TailHangs) {
     delete fib_plus;
 }
 
-TEST(LazySequenceTest, TakeAfterAppendOnInfinite_TailApplied) {
+TEST(LazySequenceTest, AppendOnInfinite_OrdinallyAccessible) {
+    // Унифицированная модель: append(item) на ω даёт ω+1.
+    // Element доступен через get(Ordinal(1, 0)), а не через "magic take with tail".
     int init[] = {0, 1};
     MutableArraySequence<int> initial(init, 2);
 
@@ -427,25 +429,32 @@ TEST(LazySequenceTest, TakeAfterAppendOnInfinite_TailApplied) {
 
     LazySequence<int> fib(rule, &initial);
 
-    // Разделяем шаги, чтобы корректно освободить промежуточный объект.
     LazySequence<int>* once = fib.append(999);
     LazySequence<int>* extended = once->append(1000);
     delete once;
-    // длина всё ещё бесконечная
-    EXPECT_TRUE(extended->get_length().is_infinite());
 
-    // take(5) превращает в конечную: первые 5 fib + хвост [999, 1000]
-    LazySequence<int>* taken = extended->take(5);
-    EXPECT_EQ(taken->get_length(), Ordinal::finite(7));
-    EXPECT_EQ(taken->get(0), 0);
-    EXPECT_EQ(taken->get(1), 1);
-    EXPECT_EQ(taken->get(2), 1);
-    EXPECT_EQ(taken->get(3), 2);
-    EXPECT_EQ(taken->get(4), 3);
-    EXPECT_EQ(taken->get(5), 999);
-    EXPECT_EQ(taken->get(6), 1000);
+    // Длина теперь честная: ω + 2 (два append-а после ω-блока)
+    Ordinal L = extended->get_length();
+    EXPECT_TRUE(L.is_infinite());
+    EXPECT_EQ(L.get_omega_count(), 1u);
+    EXPECT_EQ(L.get_finite_part(), 2u);
 
-    delete taken;
+    // Линейно видим только fib (ω-блок)
+    EXPECT_EQ(extended->get(0), 0);
+    EXPECT_EQ(extended->get(9), 34);
+
+    // Appended элементы доступны через ординальный индекс
+    EXPECT_EQ(extended->get(Ordinal(1, 0)), 999);
+    EXPECT_EQ(extended->get(Ordinal(1, 1)), 1000);
+
+    // take(5) теперь даёт ТОЛЬКО первые 5 (без auto-append).
+    // Для "first 5 + appended" — собрать вручную через take + concat.
+    LazySequence<int>* prefix = extended->take(5);
+    EXPECT_EQ(prefix->get_count(), 5);
+    EXPECT_EQ(prefix->get(0), 0);
+    EXPECT_EQ(prefix->get(4), 3);
+
+    delete prefix;
     delete extended;
 }
 

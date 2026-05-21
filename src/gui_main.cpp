@@ -1,7 +1,6 @@
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
-#include "implot.h"
 #include "gui/memory_visualizer.h"
 #include "gui/lazy_sequence_visualizer.h"
 #include "memory/memory_tape.h"
@@ -9,6 +8,7 @@
 #include "memory/alloc_event_stream.h"
 #include "streams/lazy_read_stream.h"
 #include "lazy/lazy_sequence.h"
+#include "lazy/sliding_cache.h"
 #include "core/sequence.h"
 #include <GLFW/glfw3.h>
 #include <cstdio>
@@ -19,7 +19,7 @@
 #include <stdexcept>
 #include <iostream>
 
-// ============================ Memory Tape Allocator ============================
+// ============================
 
 static int g_mem_capacity = 64;
 static int g_mem_alloc_size = 3;
@@ -33,8 +33,8 @@ static LazySequence<AllocEvent>* g_mem_stream = nullptr;
 static LazyReadStream<AllocEvent>* g_mem_reader = nullptr;
 
 struct MemLogEntry { char text[96]; };
-static MutableArraySequence<MemLogEntry> g_mem_log;
 static const int g_mem_log_max = 200;
+static SlidingCache<MemLogEntry> g_mem_log(g_mem_log_max);
 
 void memory_log(const char* fmt, ...) {
     MemLogEntry entry;
@@ -42,26 +42,19 @@ void memory_log(const char* fmt, ...) {
     va_start(args, fmt);
     vsnprintf(entry.text, sizeof(entry.text), fmt, args);
     va_end(args);
-    g_mem_log.append(entry);
 
-    if (g_mem_log.get_count() > g_mem_log_max) {
-        MutableArraySequence<MemLogEntry> trimmed;
-        int drop = g_mem_log.get_count() - g_mem_log_max;
-        for (int index = drop; index < g_mem_log.get_count(); index++) {
-            trimmed.append(g_mem_log.get(index));
-        }
-        g_mem_log = trimmed;
-    }
+    g_mem_log.push(entry);
 }
 
 void memory_reset() {
     delete g_mem_reader;
     delete g_mem_stream;
     delete g_mem_tape;
+
     g_mem_reader = nullptr;
     g_mem_stream = nullptr;
     g_mem_tape = nullptr;
-    g_mem_log = MutableArraySequence<MemLogEntry>();
+    g_mem_log.clear();
 
     if (g_mem_capacity < 1) g_mem_capacity = 1;
     if (g_mem_capacity > 4096) g_mem_capacity = 4096;
@@ -93,8 +86,10 @@ void memory_apply_event(const AllocEvent& event) {
     int last_seen = -1;
     for (int index = 0; index < capacity; index++) {
         const Cell& cell = g_mem_tape->get_cell(index);
+
         if (!cell.used) continue;
         if (cell.block_id == last_seen) continue;
+
         last_seen = cell.block_id;
         live_count++;
     }
@@ -109,9 +104,12 @@ void memory_apply_event(const AllocEvent& event) {
     last_seen = -1;
     for (int index = 0; index < capacity && live_id < 0; index++) {
         const Cell& cell = g_mem_tape->get_cell(index);
+
         if (!cell.used) continue;
         if (cell.block_id == last_seen) continue;
+
         last_seen = cell.block_id;
+
         if (passed == target) live_id = cell.block_id;
         passed++;
     }
@@ -122,6 +120,7 @@ void memory_apply_event(const AllocEvent& event) {
 
 void memory_step_from_stream() {
     if (g_mem_reader == nullptr) return;
+
     if (g_mem_reader->is_end_of_stream()) {
         memory_log("Stream: end of stream");
         return;
@@ -143,10 +142,13 @@ void memory_fragment_chaos() {
     for (int index = 0; index < capacity; index++) {
         g_mem_tape->alloc(1, strategy);
     }
+
     int half_freed = 0;
+
     for (int block_id = 0; block_id < capacity; block_id += 2) {
         if (g_mem_tape->free(block_id)) half_freed++;
     }
+
     memory_log("CHAOS: filled %d cells, freed %d alternates", capacity, half_freed);
     memory_log("CHAOS: fragmentation = %.1f%%", g_mem_tape->fragmentation() * 100.0);
 }
@@ -156,7 +158,9 @@ void draw_memory_window() {
     ImGui::Begin("Memory Tape Allocator");
 
     bool need_reset = false;
+
     if (ImGui::InputInt("Capacity", &g_mem_capacity)) need_reset = true;
+
     ImGui::Combo("Strategy", &g_mem_strategy_idx, g_mem_strategies, 3);
     ImGui::SliderInt("Alloc size", &g_mem_alloc_size, 1, 16);
     ImGui::InputInt("Free block id", &g_mem_manual_free_id);
@@ -204,15 +208,19 @@ void draw_memory_window() {
 
     ImGui::Separator();
     ImGui::Text("Recent events (last 20):");
-    int start = g_mem_log.get_count() > 20 ? g_mem_log.get_count() - 20 : 0;
-    for (int index = start; index < g_mem_log.get_count(); index++) {
-        ImGui::TextUnformatted(g_mem_log.get(index).text);
+    if (!g_mem_log.is_empty()) {
+        size_t last = g_mem_log.get_last_index();
+        size_t first = g_mem_log.get_first_index();
+        size_t shown = std::min<size_t>(20, last - first + 1);
+        for (size_t i = last - shown + 1; i <= last; i++) {
+            ImGui::TextUnformatted(g_mem_log.get(i).text);
+        }
     }
 
     ImGui::End();
 }
 
-// ============================ Lazy Sequence ============================
+// ============================
 
 static LazySequence<int>* g_lazy_seq = nullptr;
 static int g_lazy_source_idx = 0;
@@ -222,15 +230,13 @@ static int g_lazy_value = 7;
 static int g_lazy_map_choice = 0;
 static int g_lazy_where_choice = 0;
 static int g_lazy_cache_capacity = 64;
-static const char* g_lazy_source_names[] = {
-    "Natural Numbers", "Fibonacci", "Powers of 2", "Finite {1..5}"
-};
+static const char* g_lazy_source_names[] = {"Natural Numbers", "Fibonacci", "Powers of 2", "Finite {1..5}"};
 static const char* g_lazy_map_names[] = {"x * 2", "x + 1", "-x"};
 static const char* g_lazy_where_names[] = {"even", "odd", "x > 0"};
 
 struct LazyLogEntry { char text[96]; };
-static MutableArraySequence<LazyLogEntry> g_lazy_log;
 static const int g_lazy_log_max = 200;
+static SlidingCache<LazyLogEntry> g_lazy_log(g_lazy_log_max);
 
 void lazy_log(const char* fmt, ...) {
     LazyLogEntry entry;
@@ -238,59 +244,60 @@ void lazy_log(const char* fmt, ...) {
     va_start(args, fmt);
     vsnprintf(entry.text, sizeof(entry.text), fmt, args);
     va_end(args);
-    g_lazy_log.append(entry);
-
-    if (g_lazy_log.get_count() > g_lazy_log_max) {
-        MutableArraySequence<LazyLogEntry> trimmed;
-        int drop = g_lazy_log.get_count() - g_lazy_log_max;
-        for (int index = drop; index < g_lazy_log.get_count(); index++) {
-            trimmed.append(g_lazy_log.get(index));
-        }
-        g_lazy_log = trimmed;
-    }
+    g_lazy_log.push(entry);
 }
 
 void lazy_reset(int source_idx) {
     delete g_lazy_seq;
     g_lazy_seq = nullptr;
-    g_lazy_log = MutableArraySequence<LazyLogEntry>();
+    g_lazy_log.clear();
 
     if (g_lazy_cache_capacity < 2) g_lazy_cache_capacity = 2;
     if (g_lazy_cache_capacity > 65536) g_lazy_cache_capacity = 65536;
     int capacity = g_lazy_cache_capacity;
 
     switch (source_idx) {
-        case 0: { // Natural Numbers: 0,1,2,3,...
+        case 0: { // Natural Numbers
             MutableArraySequence<int> initial;
             initial.append(0);
+
             std::function<int(Sequence<int>*)> rule = [](Sequence<int>* window) {
                 return window->get_last() + 1;
             };
+
             g_lazy_seq = new LazySequence<int>(rule, &initial, capacity);
             break;
         }
-        case 1: { // Fibonacci (window k=2 хранит два последних)
+        case 1: { // Fibonacci
             MutableArraySequence<int> initial;
             initial.append(0);
             initial.append(1);
+
             std::function<int(Sequence<int>*)> rule = [](Sequence<int>* window) {
                 return window->get_first() + window->get_last();
             };
+
             g_lazy_seq = new LazySequence<int>(rule, &initial, capacity);
             break;
         }
         case 2: { // Powers of 2: 1,2,4,8,...
             MutableArraySequence<int> initial;
             initial.append(1);
+
             std::function<int(Sequence<int>*)> rule = [](Sequence<int>* window) {
                 return window->get_last() * 2;
             };
+
             g_lazy_seq = new LazySequence<int>(rule, &initial, capacity);
             break;
         }
         case 3: { // Finite {1..5}
             MutableArraySequence<int> source;
-            for (int value = 1; value <= 5; value++) source.append(value);
+
+            for (int value = 1; value <= 5; value++) {
+                source.append(value);
+            }
+
             g_lazy_seq = new LazySequence<int>(&source, capacity);
             break;
         }
@@ -316,15 +323,14 @@ void draw_lazy_window() {
         lazy_reset(g_lazy_source_idx);
     }
     ImGui::SetNextItemWidth(150);
-    // Размер истории (sliding-cache) - параметр конструктора LazySequence
-    // Меняется только пересозданием: применяется при следующем Reset
+
     ImGui::InputInt("Cache capacity", &g_lazy_cache_capacity);
     ImGui::SameLine();
     if (ImGui::Button("Reset")) lazy_reset(g_lazy_source_idx);
 
     ImGui::Separator();
 
-    // get(i)
+    // get
     ImGui::SetNextItemWidth(150);
     ImGui::InputInt("##get_i", &g_lazy_get_index);
     ImGui::SameLine();
@@ -337,7 +343,7 @@ void draw_lazy_window() {
         }
     }
 
-    // take(N)
+    // take
     ImGui::SetNextItemWidth(150);
     ImGui::InputInt("##take_n", &g_lazy_take_n);
     ImGui::SameLine();
@@ -352,17 +358,21 @@ void draw_lazy_window() {
     // append/prepend value
     ImGui::SetNextItemWidth(150);
     ImGui::InputInt("##val", &g_lazy_value);
+
     ImGui::SameLine();
     if (ImGui::Button("Append")) lazy_replace(g_lazy_seq->append(g_lazy_value), "append");
+
     ImGui::SameLine();
     if (ImGui::Button("Prepend")) lazy_replace(g_lazy_seq->prepend(g_lazy_value), "prepend");
 
-    // concat {100,200,300}
+    // concat
     if (ImGui::Button("Concat {100,200,300}")) {
         MutableArraySequence<int> right_side;
+
         right_side.append(100);
         right_side.append(200);
         right_side.append(300);
+
         LazySequence<int>* other = new LazySequence<int>(&right_side);
         try {
             lazy_replace(g_lazy_seq->concat(other), "concat");
@@ -378,9 +388,11 @@ void draw_lazy_window() {
     ImGui::SameLine();
     if (ImGui::Button("Apply Map")) {
         std::function<int(const int&)> function;
+
         if (g_lazy_map_choice == 0) function = [](const int& x) { return x * 2; };
         else if (g_lazy_map_choice == 1) function = [](const int& x) { return x + 1; };
         else function = [](const int& x) { return -x; };
+
         try {
             lazy_replace(g_lazy_seq->map<int>(function), "map");
         } catch (const std::exception& ex) {
@@ -394,9 +406,11 @@ void draw_lazy_window() {
     ImGui::SameLine();
     if (ImGui::Button("Apply Where")) {
         std::function<bool(const int&)> predicate;
+
         if (g_lazy_where_choice == 0) predicate = [](const int& x) { return x % 2 == 0; };
         else if (g_lazy_where_choice == 1) predicate = [](const int& x) { return x % 2 != 0; };
         else predicate = [](const int& x) { return x > 0; };
+
         try {
             lazy_replace(g_lazy_seq->where(predicate), "where");
         } catch (const std::exception& ex) {
@@ -408,13 +422,17 @@ void draw_lazy_window() {
     if (ImGui::Button("Zip with Naturals (sum)")) {
         MutableArraySequence<int> initial;
         initial.append(0);
+
         std::function<int(Sequence<int>*)> rule = [](Sequence<int>* window) {
             return window->get_last() + 1;
         };
+
         LazySequence<int>* naturals = new LazySequence<int>(rule, &initial);
+
         std::function<int(const int&, const int&)> add = [](const int& a, const int& b) {
             return a + b;
         };
+
         try {
             lazy_replace(g_lazy_seq->zip<int, int>(naturals, add), "zip");
         } catch (const std::exception& ex) {
@@ -423,15 +441,16 @@ void draw_lazy_window() {
         delete naturals;
     }
 
-    // Кнопка явной материализации первых N (показывает работу sliding-cache)
-    // Для финитных - берёт min(32, length), чтобы не упереться в out_of_range
+    // Кнопка материализации первых N 
     ImGui::SameLine();
     if (ImGui::Button("Materialize first 32")) {
         int limit = 32;
         Ordinal length = g_lazy_seq->get_length();
+
         if (length.is_finite() && length.get_value() < static_cast<size_t>(limit)) {
             limit = static_cast<int>(length.get_value());
         }
+
         try {
             for (int index = 0; index < limit; index++) g_lazy_seq->get(index);
             lazy_log("materialized 0..%d", limit - 1);
@@ -445,15 +464,21 @@ void draw_lazy_window() {
 
     ImGui::Separator();
     ImGui::Text("Recent operations (last 20):");
-    int start = g_lazy_log.get_count() > 20 ? g_lazy_log.get_count() - 20 : 0;
-    for (int index = start; index < g_lazy_log.get_count(); index++) {
-        ImGui::TextUnformatted(g_lazy_log.get(index).text);
+    if (!g_lazy_log.is_empty()) {
+        size_t last = g_lazy_log.get_last_index();
+        size_t first = g_lazy_log.get_first_index();
+        size_t shown = std::min<size_t>(20, last - first + 1);
+
+        for (size_t i = last - shown + 1; i <= last; i++) {
+            ImGui::TextUnformatted(g_lazy_log.get(i).text);
+        }
+
     }
 
     ImGui::End();
 }
 
-// ============================ GUI entry ============================
+// ===========================
 
 void draw_gui() {
     draw_memory_window();
@@ -477,11 +502,16 @@ int main() {
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
-    ImPlot::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     ImGui::StyleColorsDark();
-    ImGui::GetStyle().ScaleAllSizes(2.0f);
-    io.FontGlobalScale = 2.0f;
+
+    float xscale = 1.5f, yscale = 1.5f;
+    GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+    if (monitor != nullptr) glfwGetMonitorContentScale(monitor, &xscale, &yscale);
+    float dpi_scale = (xscale > 0.0f) ? xscale : 1.0f;
+    ImGui::GetStyle().ScaleAllSizes(dpi_scale);
+    io.FontGlobalScale = dpi_scale;
+
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 130");
 
@@ -506,7 +536,6 @@ int main() {
 
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
-    ImPlot::DestroyContext();
     ImGui::DestroyContext();
     glfwDestroyWindow(window);
     glfwTerminate();

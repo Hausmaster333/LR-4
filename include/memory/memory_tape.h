@@ -5,30 +5,25 @@
 #include "memory/alloc_event.h"
 #include <stdexcept>
 
-// Одна ячейка ленты памяти
-// Если used == false, ячейка свободна, block_id == -1
 struct Cell {
-    bool used;
+    bool used; // Если used == false, ячейка свободна, block_id == -1
     int block_id;
 };
 
-// Мутабельная «лента памяти» фиксированной длины
-// alloc(size, strategy) ищет run свободных ячеек по выбранной стратегии,
-// помечает их как занятые с уникальным block_id
-// free(block_id) освобождает все ячейки данного блока
-// Контейнер ячеек — DynamicArray<Cell>
 class MemoryTape {
     private:
-        DynamicArray<Cell> cells;
+        DynamicArray<Cell> cells; // Хранилище ячеек
         int capacity;
         int next_block_id;
         int used_cells_count;
         int blocks_count;
 
-        // Ищет позицию начала run-а длины >= size по стратегии
-        // Возвращает -1 если подходящего run-а нет
-        // FirstFit - первый найденный, BestFit - минимальный по длине,
-        // WorstFit - максимальный по длине
+        // Кэш фрагментации
+        mutable bool frag_cached;
+        mutable double frag_value;
+
+        void invalidate_frag() { frag_cached = false; }
+
         int find_run(int size, AllocStrategy strategy) const {
             int best_start = -1;
             int best_length = -1;
@@ -44,15 +39,15 @@ class MemoryTape {
                 int run_length = run_end - index;
 
                 if (run_length >= size) {
-                    if (strategy == AllocStrategy::FirstFit) {
+                    if (strategy == AllocStrategy::FirstFit) { // FirstFit - первый найденный
                         return index;
                     }
-                    if (strategy == AllocStrategy::BestFit) {
+                    if (strategy == AllocStrategy::BestFit) { // BestFit - минимальный по длине
                         if (best_length < 0 || run_length < best_length) {
                             best_length = run_length;
                             best_start = index;
                         }
-                    } else { // WorstFit
+                    } else { // WorstFit - максимальный по длине
                         if (best_length < 0 || run_length > best_length) {
                             best_length = run_length;
                             best_start = index;
@@ -65,21 +60,20 @@ class MemoryTape {
             return best_start;
         }
 
-        // Проверяет, что capacity > 0, иначе throw. Возвращает capacity как есть
-        // Нужен до конструктора DynamicArray, чтобы заранее отбросить плохой вход
         static int validated_capacity(int capacity) {
             if (capacity <= 0) throw std::invalid_argument("MemoryTape: capacity must be > 0");
 
             return capacity;
         }
     public:
-        // Создаёт пустую ленту длины capacity. capacity > 0 иначе throw
         MemoryTape(int capacity)
             : cells(validated_capacity(capacity)),
               capacity(capacity),
               next_block_id(0),
               used_cells_count(0),
-              blocks_count(0) {
+              blocks_count(0),
+              frag_cached(false),
+              frag_value(0.0) {
             for (int index = 0; index < capacity; index++) {
                 cells.set(index, {false, -1});
             }
@@ -91,9 +85,7 @@ class MemoryTape {
         int get_blocks_count() const { return blocks_count; }
         const Cell& get_cell(int index) const { return cells.get(index); }
 
-        // Выделяет блок размера size по стратегии strategy
-        // Возвращает уникальный block_id (>= 0) или -1 если не нашлось места
-        // next_block_id растёт монотонно и сбрасывается только через reset()
+        // Выделяет блок размера size по 1 из 3 стратегий
         int alloc(int size, AllocStrategy strategy) {
             if (size <= 0 || size > capacity) return -1;
             int start = find_run(size, strategy);
@@ -105,12 +97,12 @@ class MemoryTape {
             }
             used_cells_count += size;
             blocks_count += 1;
+            invalidate_frag();
 
             return new_id;
         }
 
-        // Освобождает все ячейки с этим block_id. Возвращает true если найден
-        // Сканирует все capacity ячеек один раз - O(capacity)
+        // Освобождает все ячейки с этим block_id
         bool free(int block_id) {
             bool found = false;
             int freed_count = 0;
@@ -125,25 +117,30 @@ class MemoryTape {
             if (found) {
                 used_cells_count -= freed_count;
                 blocks_count -= 1;
+                invalidate_frag();
             }
 
             return found;
         }
 
-        // Полный сброс: все ячейки свободны, next_block_id = 0
         void reset() {
             for (int index = 0; index < capacity; index++) cells.set(index, {false, -1});
             next_block_id = 0;
             used_cells_count = 0;
             blocks_count = 0;
+            invalidate_frag();
         }
 
         // Коэффициент фрагментации = 1 - largest_free_run / total_free
-        // 0 если total_free == 0 (полностью занятая лента не считается фрагментированной)
-        // Чем ближе к 1, тем хуже: много мелких дыр и плохо для alloc(big_size)
         double fragmentation() const {
+            if (frag_cached) return frag_value;
+
             int free_total = capacity - used_cells_count;
-            if (free_total == 0) return 0.0;
+            if (free_total == 0) {
+                frag_value = 0.0;
+                frag_cached = true;
+                return 0.0;
+            }
 
             int max_run = 0;
             int index = 0;
@@ -158,7 +155,9 @@ class MemoryTape {
                 index = run_end;
             }
 
-            return 1.0 - static_cast<double>(max_run) / static_cast<double>(free_total);
+            frag_value = 1.0 - static_cast<double>(max_run) / static_cast<double>(free_total);
+            frag_cached = true;
+            return frag_value;
         }
 };
 

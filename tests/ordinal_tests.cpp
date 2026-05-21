@@ -105,10 +105,10 @@ TEST(InsertExtra, Length_InfiniteIntoFinite) {
     EXPECT_EQ(L.get_omega_count(), 1u);
     EXPECT_EQ(L.get_finite_part(), 3u);  // 5 - 2 = 3 элемента в хвосте
 
-    EXPECT_EQ(res->get(OrdinalIndex(1, 0)), 3);
-    EXPECT_EQ(res->get(OrdinalIndex(1, 1)), 4);
-    EXPECT_EQ(res->get(OrdinalIndex(1, 2)), 5);
-    EXPECT_THROW(res->get(OrdinalIndex(1, 3)), std::out_of_range);
+    EXPECT_EQ(res->get(Ordinal(1, 0)), 3);
+    EXPECT_EQ(res->get(Ordinal(1, 1)), 4);
+    EXPECT_EQ(res->get(Ordinal(1, 2)), 5);
+    EXPECT_THROW(res->get(Ordinal(1, 3)), std::out_of_range);
 
     delete res; delete base; delete ins;
 }
@@ -144,9 +144,9 @@ TEST(InsertExtra, Length_InfiniteIntoFinite_AtBeginning) {
     EXPECT_EQ(res->get(0), 0);   // injected[0]
     EXPECT_EQ(res->get(5), 5);   // injected[5]
 
-    EXPECT_EQ(res->get(OrdinalIndex(1, 0)), 10);
-    EXPECT_EQ(res->get(OrdinalIndex(1, 1)), 20);
-    EXPECT_EQ(res->get(OrdinalIndex(1, 2)), 30);
+    EXPECT_EQ(res->get(Ordinal(1, 0)), 10);
+    EXPECT_EQ(res->get(Ordinal(1, 1)), 20);
+    EXPECT_EQ(res->get(Ordinal(1, 2)), 30);
 
     delete res; delete base; delete ins;
 }
@@ -164,9 +164,9 @@ TEST(InsertExtra, LargeIndicesInOmegaPart) {
     EXPECT_EQ(res->get(1000), 1990);    // injected[990]
 
     // Хвост base (10, 11, 12, ...) в 1-м ω-блоке
-    EXPECT_EQ(res->get(OrdinalIndex(1, 0)), 10);
-    EXPECT_EQ(res->get(OrdinalIndex(1, 100)), 110);
-    EXPECT_EQ(res->get(OrdinalIndex(1, 9999)), 10009);
+    EXPECT_EQ(res->get(Ordinal(1, 0)), 10);
+    EXPECT_EQ(res->get(Ordinal(1, 100)), 110);
+    EXPECT_EQ(res->get(Ordinal(1, 9999)), 10009);
 
     delete res; delete base; delete ins;
 }
@@ -178,8 +178,8 @@ TEST(InsertExtra, RepeatedAccessIsConsistent) {
     LazySequence<int>* res = base->insert_at(ins, 5);
 
     for (int trial = 0; trial < 3; trial++) {
-        EXPECT_EQ(res->get(OrdinalIndex(1, 0)), 5);
-        EXPECT_EQ(res->get(OrdinalIndex(1, 7)), 12);
+        EXPECT_EQ(res->get(Ordinal(1, 0)), 5);
+        EXPECT_EQ(res->get(Ordinal(1, 7)), 12);
         EXPECT_EQ(res->get(100), 1095);
     }
 
@@ -224,8 +224,8 @@ TEST(InsertExtra, FibAsInsertedSequence) {
     EXPECT_EQ(res->get(5), 5);
     EXPECT_EQ(res->get(6), 8);
 
-    EXPECT_EQ(res->get(OrdinalIndex(1, 0)), -1);
-    EXPECT_EQ(res->get(OrdinalIndex(1, 1)), -2);
+    EXPECT_EQ(res->get(Ordinal(1, 0)), -1);
+    EXPECT_EQ(res->get(Ordinal(1, 1)), -2);
 
     delete res; delete base; delete fib;
 }
@@ -249,7 +249,7 @@ TEST(InsertExtra, NoCrossContamination_InfIntoInf) {
     }
     // Tail zone (ω+k): все >= 7 и < 1000
     for (size_t k = 0; k < 20; k++) {
-        int v = res->get(OrdinalIndex(1, k));
+        int v = res->get(Ordinal(1, k));
         EXPECT_GE(v, 7) << "omega_part=1, k=" << k;
         EXPECT_LT(v, 1000) << "omega_part=1, k=" << k;
     }
@@ -265,19 +265,19 @@ TEST(InsertExtra, FiniteIntoFinite_NoOmegaAccess) {
     LazySequence<int>* res = base->insert_at(ins, 1);
 
     // omega_part=1 на полностью финитной последовательности - выход за границы
-    EXPECT_THROW(res->get(OrdinalIndex(1, 0)), std::out_of_range);
+    EXPECT_THROW(res->get(Ordinal(1, 0)), std::out_of_range);
 
     delete res; delete base; delete ins;
 }
 
-TEST(InsertExtra, OrdinalIndexZeroEquivalentToInt) {
+TEST(InsertExtra, OrdinalZeroEquivalentToInt) {
     LazySequence<int>* base = make_inf(0);
     LazySequence<int>* ins = make_inf(1000);
     LazySequence<int>* res = base->insert_at(ins, 5);
 
     // {0, k} должен быть идентичен get(k)
     for (int k = 0; k < 30; k++) {
-        EXPECT_EQ(res->get(OrdinalIndex(0, k)), res->get(k)) << "k=" << k;
+        EXPECT_EQ(res->get(Ordinal(0, k)), res->get(k)) << "k=" << k;
     }
 
     delete res; delete base; delete ins;
@@ -372,7 +372,7 @@ TEST(InsertExtra, InsertWithBothOperandsInfinite_ConcatWithFinite) {
     EXPECT_EQ(combined->get_length().get_omega_count(), 2u);
     EXPECT_EQ(combined->get(2), 2);
     EXPECT_EQ(combined->get(3), 100);
-    EXPECT_EQ(combined->get(OrdinalIndex(1, 0)), 3);
+    EXPECT_EQ(combined->get(Ordinal(1, 0)), 3);
 
     delete combined; delete a; delete b;
 }
@@ -423,14 +423,14 @@ TEST(Concat, ChainedInfInfInf_OrdinalAccess) {
     LazySequence<int>* abc = ab->concat(c);
 
     // Левый ω-блок - a
-    EXPECT_EQ(abc->get(OrdinalIndex(0, 5)), 5);
-    EXPECT_EQ(abc->get(OrdinalIndex(0, 99)), 99);
+    EXPECT_EQ(abc->get(Ordinal(0, 5)), 5);
+    EXPECT_EQ(abc->get(Ordinal(0, 99)), 99);
     // Средний ω-блок - b
-    EXPECT_EQ(abc->get(OrdinalIndex(1, 0)), 100);
-    EXPECT_EQ(abc->get(OrdinalIndex(1, 50)), 150);
+    EXPECT_EQ(abc->get(Ordinal(1, 0)), 100);
+    EXPECT_EQ(abc->get(Ordinal(1, 50)), 150);
     // Правый ω-блок - c
-    EXPECT_EQ(abc->get(OrdinalIndex(2, 0)), 1000);
-    EXPECT_EQ(abc->get(OrdinalIndex(2, 99)), 1099);
+    EXPECT_EQ(abc->get(Ordinal(2, 0)), 1000);
+    EXPECT_EQ(abc->get(Ordinal(2, 99)), 1099);
 
     delete abc; delete ab; delete a; delete b; delete c;
 }
@@ -450,9 +450,9 @@ TEST(Concat, ChainedAssociativityOfAccess) {
     LazySequence<int>* right_assoc = a2->concat(b2->concat(c2));
 
     for (size_t k = 0; k < 10; k++) {
-        EXPECT_EQ(left_assoc->get(OrdinalIndex(0, k)), right_assoc->get(OrdinalIndex(0, k)));
-        EXPECT_EQ(left_assoc->get(OrdinalIndex(1, k)), right_assoc->get(OrdinalIndex(1, k)));
-        EXPECT_EQ(left_assoc->get(OrdinalIndex(2, k)), right_assoc->get(OrdinalIndex(2, k)));
+        EXPECT_EQ(left_assoc->get(Ordinal(0, k)), right_assoc->get(Ordinal(0, k)));
+        EXPECT_EQ(left_assoc->get(Ordinal(1, k)), right_assoc->get(Ordinal(1, k)));
+        EXPECT_EQ(left_assoc->get(Ordinal(2, k)), right_assoc->get(Ordinal(2, k)));
     }
 
     // Note: cleanup is messy because concat() returns new LazySequence but doesn't own operands.
@@ -465,7 +465,7 @@ TEST(Concat, ChainedAssociativityOfAccess) {
 TEST(Concat, InfWithTail_ConcatPreservesTail) {
     // make_inf(0).append(99).concat(make_inf(1000))
     // Структура: [base ω] + [99] + [other ω] = ω + 1 + ω = ω·2
-    // Tail '99' видится между блоками через OrdinalIndex.
+    // Tail '99' видится между блоками через Ordinal.
     LazySequence<int>* base = make_inf(0);
     LazySequence<int>* with_tail = base->append(99);
     LazySequence<int>* other = make_inf(1000);
@@ -476,42 +476,42 @@ TEST(Concat, InfWithTail_ConcatPreservesTail) {
     EXPECT_EQ(L.get_omega_count(), 2u);
     EXPECT_EQ(L.get_finite_part(), 0u);
 
-    // get(OrdinalIndex(0, k)) - в base
-    EXPECT_EQ(res->get(OrdinalIndex(0, 5)), 5);
-    // get(OrdinalIndex(1, 0)) - сразу после base = первый элемент tail-прослойки = 99
-    EXPECT_EQ(res->get(OrdinalIndex(1, 0)), 99);
-    // get(OrdinalIndex(1, 1)) - после tail-прослойки = первый элемент other
-    EXPECT_EQ(res->get(OrdinalIndex(1, 1)), 1000);
+    // get(Ordinal(0, k)) - в base
+    EXPECT_EQ(res->get(Ordinal(0, 5)), 5);
+    // get(Ordinal(1, 0)) - сразу после base = первый элемент tail-прослойки = 99
+    EXPECT_EQ(res->get(Ordinal(1, 0)), 99);
+    // get(Ordinal(1, 1)) - после tail-прослойки = первый элемент other
+    EXPECT_EQ(res->get(Ordinal(1, 1)), 1000);
 
     delete res; delete with_tail; delete base; delete other;
 }
 
 TEST(Take, OrdinalLimitOmegaPlusN) {
-    // На ω·2 берём take(OrdinalIndex(1, 5)): длина результата = ω+5
+    // На ω·2 берём take(Ordinal(1, 5)): длина результата = ω+5
     LazySequence<int>* a = make_inf(0);
     LazySequence<int>* b = make_inf(100);
     LazySequence<int>* ab = a->concat(b);       // ω·2
 
-    LazySequence<int>* taken = ab->take(OrdinalIndex(1, 5));
+    LazySequence<int>* taken = ab->take(Ordinal(1, 5));
 
     Ordinal L = taken->get_length();
     EXPECT_EQ(L.get_omega_count(), 1u);
     EXPECT_EQ(L.get_finite_part(), 5u);
 
     // Доступ внутри лимита
-    EXPECT_EQ(taken->get(OrdinalIndex(0, 5)), 5);
-    EXPECT_EQ(taken->get(OrdinalIndex(1, 0)), 100);
-    EXPECT_EQ(taken->get(OrdinalIndex(1, 4)), 104);
+    EXPECT_EQ(taken->get(Ordinal(0, 5)), 5);
+    EXPECT_EQ(taken->get(Ordinal(1, 0)), 100);
+    EXPECT_EQ(taken->get(Ordinal(1, 4)), 104);
 
     // За лимитом - throw
-    EXPECT_THROW(taken->get(OrdinalIndex(1, 5)), std::out_of_range);
-    EXPECT_THROW(taken->get(OrdinalIndex(2, 0)), std::out_of_range);
+    EXPECT_THROW(taken->get(Ordinal(1, 5)), std::out_of_range);
+    EXPECT_THROW(taken->get(Ordinal(2, 0)), std::out_of_range);
 
     delete taken; delete ab; delete a; delete b;
 }
 
 TEST(Map, OrdinalAccessThroughMapAfterConcat) {
-    // concat(inf, inf).map(*10).get(OrdinalIndex(1, k)) должен работать
+    // concat(inf, inf).map(*10).get(Ordinal(1, k)) должен работать
     LazySequence<int>* a = make_inf(0);
     LazySequence<int>* b = make_inf(100);
     LazySequence<int>* ab = a->concat(b);
@@ -519,9 +519,9 @@ TEST(Map, OrdinalAccessThroughMapAfterConcat) {
     std::function<int(const int&)> times10 = [](const int& x) { return x * 10; };
     LazySequence<int>* mapped = ab->map<int>(times10);
 
-    EXPECT_EQ(mapped->get(OrdinalIndex(0, 5)), 50);
-    EXPECT_EQ(mapped->get(OrdinalIndex(1, 0)), 1000);
-    EXPECT_EQ(mapped->get(OrdinalIndex(1, 3)), 1030);
+    EXPECT_EQ(mapped->get(Ordinal(0, 5)), 50);
+    EXPECT_EQ(mapped->get(Ordinal(1, 0)), 1000);
+    EXPECT_EQ(mapped->get(Ordinal(1, 3)), 1030);
 
     delete mapped; delete ab; delete a; delete b;
 }
@@ -535,7 +535,7 @@ TEST(Where, NoOrdinalAccess) {
     std::function<bool(const int&)> all = [](const int&) { return true; };
     LazySequence<int>* filtered = ab->where(all);
 
-    EXPECT_THROW(filtered->get(OrdinalIndex(1, 0)), std::logic_error);
+    EXPECT_THROW(filtered->get(Ordinal(1, 0)), std::logic_error);
 
     delete filtered; delete ab; delete a; delete b;
 }
@@ -637,31 +637,91 @@ TEST(InsertSeq, ThisWithTail_TailPreserved) {
     delete res; delete this_seq; delete other; delete base;
 }
 
-TEST(InsertSeq, InfiniteOtherIntoSeqWithTail_Throws) {
-    // Bug C: невозможно корректно представить this с tail + inf-other.
-    // Должно бросить с понятным сообщением, а не терять tail.
+TEST(InsertSeq, InfiniteOtherIntoSeqAfterAppend_Works) {
+    // В унифицированной модели append встроен в generator, поэтому insert(inf, 1)
+    // в this = [1,2,3,99] (где 99 — бывший tail) — это обычный случай finite + inf.
+    // Длина: 1 + ω + 3 = ω + 3.
     LazySequence<int>* base = make_fin({1, 2, 3});
     LazySequence<int>* this_seq = base->append(99);
     LazySequence<int>* other = make_inf(100);
 
-    EXPECT_THROW(this_seq->insert_at(other, 1), std::logic_error);
+    LazySequence<int>* res = this_seq->insert_at(other, 1);
 
-    delete this_seq; delete other; delete base;
+    Ordinal L = res->get_length();
+    EXPECT_EQ(L.get_omega_count(), 1u);
+    EXPECT_EQ(L.get_finite_part(), 3u);  // [2, 3, 99] хвост за ω
+
+    // Линейно: this[0] = 1, then injected inf = 100, 101, ...
+    EXPECT_EQ(res->get(0), 1);
+    EXPECT_EQ(res->get(1), 100);
+    EXPECT_EQ(res->get(2), 101);
+
+    // Ординально: хвост this за ω-блоком
+    EXPECT_EQ(res->get(Ordinal(1, 0)), 2);
+    EXPECT_EQ(res->get(Ordinal(1, 1)), 3);
+    EXPECT_EQ(res->get(Ordinal(1, 2)), 99);
+
+    delete res; delete this_seq; delete other; delete base;
 }
 
-TEST(WhereOnFinite, LengthIncludesFilteredTail) {
-    // Bug D: where с непустым tail. base[1,2,3,4,5] + tail[6,7,8].
-    // even-фильтр: base даёт upper-bound 5, tail фильтруется в [6, 8] = 2 элемента.
-    // length должна быть 5 + 2 = 7.
+TEST(WhereAfterAppend, LengthIsUpperBoundOfWholeSequence) {
+    // В унифицированной модели append встроен в generator. base.append(6).append(7).append(8)
+    // даёт length=8 (всё внутри). where(even) - upper bound = 8 (все элементы могут пройти).
+    // Реальное число фильтрованных проверяется через материализацию.
     LazySequence<int>* base = make_fin({1, 2, 3, 4, 5});
-    LazySequence<int>* with_tail = base->append(6)->append(7)->append(8);
+    LazySequence<int>* s1 = base->append(6);
+    LazySequence<int>* s2 = s1->append(7);
+    LazySequence<int>* with_extra = s2->append(8);
+
+    Ordinal full_len = with_extra->get_length();
+    EXPECT_EQ(full_len.get_value(), 8u);
 
     std::function<bool(const int&)> even = [](const int& x) { return x % 2 == 0; };
-    LazySequence<int>* w = with_tail->where(even);
+    LazySequence<int>* w = with_extra->where(even);
 
     Ordinal L = w->get_length();
     EXPECT_TRUE(L.is_finite());
-    EXPECT_EQ(L.get_value(), 7u);  // base upper bound 5 + filtered tail (2 of 3)
+    EXPECT_EQ(L.get_value(), 8u);   // upper bound = вся длина source
 
-    delete w; delete with_tail; delete base;
+    // Реально отфильтровано 4: 2, 4, 6, 8
+    EXPECT_EQ(w->get(0), 2);
+    EXPECT_EQ(w->get(1), 4);
+    EXPECT_EQ(w->get(2), 6);
+    EXPECT_EQ(w->get(3), 8);
+    EXPECT_THROW(w->get(4), std::out_of_range);
+
+    delete w; delete with_extra; delete s2; delete s1; delete base;
+}
+
+TEST(InsertSeq, InfiniteIntoOmegaTwoUpstream_OrdinalAccessAllBlocks) {
+    // Регрессия: раньше для omega_part > 1 в InsertAtGenerator::get_at
+    // код передавал idx в upstream без сдвига координат, и сложные случаи
+    // (вставка ω в upstream с omega_count >= 2) ломались.
+    // После исправления зон-формула работает универсально.
+    LazySequence<int>* a = make_inf(0);          // 0, 1, 2, ...           (ω)
+    LazySequence<int>* b = make_inf(1000);       // 1000, 1001, ...        (ω)
+    LazySequence<int>* ab = a->concat(b);        // ω·2
+    LazySequence<int>* inj = make_inf(100);      // 100, 101, ...          (ω)
+    LazySequence<int>* res = ab->insert_at(inj, 5);
+
+    // Длина: 5 + ω + ω·2 = ω·3
+    Ordinal L = res->get_length();
+    EXPECT_EQ(L.get_omega_count(), 3u);
+    EXPECT_EQ(L.get_finite_part(), 0u);
+
+    // omega_part=0, финитная часть: zone 1 (первые 5 ab) + zone 2 (inj)
+    EXPECT_EQ(res->get(0), 0);            // ab[0]
+    EXPECT_EQ(res->get(4), 4);            // ab[4]
+    EXPECT_EQ(res->get(5), 100);          // inj[0]
+    EXPECT_EQ(res->get(105), 200);        // inj[100]
+
+    // omega_part=1: хвост первого ω-блока ab (= a) после позиции 5
+    EXPECT_EQ(res->get(Ordinal(1, 0)), 5);       // a[5]
+    EXPECT_EQ(res->get(Ordinal(1, 100)), 105);   // a[105]
+
+    // omega_part=2: второй ω-блок ab (= b) - ИМЕННО ЗДЕСЬ был баг
+    EXPECT_EQ(res->get(Ordinal(2, 0)), 1000);    // b[0]
+    EXPECT_EQ(res->get(Ordinal(2, 5)), 1005);    // b[5]
+
+    delete res; delete ab; delete a; delete b; delete inj;
 }
