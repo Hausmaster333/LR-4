@@ -78,9 +78,6 @@ void memory_apply_event(const AllocEvent& event) {
         return;
     }
 
-    // Стрим не знает, какие id реально живы — он выдаёт «псевдослучайный»
-    // payload из [0..existing_blocks_cap). Маппим его на один из реально
-    // живых блоков ленты, чтобы не получать бесконечные miss-ы
     int capacity = g_mem_tape->get_capacity();
     int live_count = 0;
     int last_seen = -1;
@@ -130,10 +127,8 @@ void memory_step_from_stream() {
     memory_apply_event(event);
 }
 
-// Доводит ленту до максимально фрагментированного состояния:
-// заливает все ячейки блоками по 1, затем освобождает каждый чётный id
-// Итог - узор [U F U F U F …], frag → 1.0, любой alloc(>=2) даст -1
-// несмотря на ~50% свободного места
+// Доводит ленту до максимально фрагментированного состояния: заливает все ячейки блоками по 1, затем освобождает каждый чётный id
+// Итог - узор [U F U F U F …], и фрагментация стремится к 1, любой alloc с size >= 2 даст -1
 void memory_fragment_chaos() {
     g_mem_tape->reset();
     int capacity = g_mem_tape->get_capacity();
@@ -505,7 +500,7 @@ int main() {
     ImGuiIO& io = ImGui::GetIO();
     ImGui::StyleColorsDark();
 
-    float xscale = 1.5f, yscale = 1.5f;
+    float xscale = 2.0f, yscale = 2.0f;
     GLFWmonitor* monitor = glfwGetPrimaryMonitor();
     if (monitor != nullptr) glfwGetMonitorContentScale(monitor, &xscale, &yscale);
     float dpi_scale = (xscale > 0.0f) ? xscale : 1.0f;

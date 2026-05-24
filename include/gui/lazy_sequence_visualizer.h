@@ -18,23 +18,23 @@ inline void draw_lazy_cell(ImDrawList* draw, ImVec2 top_left, float width, float
     }
 }
 
-inline void print_ordinal(char* buffer, size_t buffer_size, const Ordinal& o) {
-    if (o.is_finite()) {
-        snprintf(buffer, buffer_size, "%zu", o.get_value());
+inline void print_ordinal(char* buffer, size_t buffer_size, const Ordinal& ordinal) {
+    if (ordinal.is_finite()) {
+        snprintf(buffer, buffer_size, "%zu", ordinal.get_value());
         return;
     }
 
-    size_t k = o.get_omega_count();
-    size_t n = o.get_finite_part();
+    size_t omega_count = ordinal.get_omega_count();
+    size_t finite_part = ordinal.get_finite_part();
 
-    if (k == 1 && n == 0) {
+    if (omega_count == 1 && finite_part == 0) {
         snprintf(buffer, buffer_size, "w");
-    } else if (n == 0) {
-        snprintf(buffer, buffer_size, "w*%zu", k);
-    } else if (k == 1) {
-        snprintf(buffer, buffer_size, "w + %zu", n);
+    } else if (finite_part == 0) {
+        snprintf(buffer, buffer_size, "w*%zu", omega_count);
+    } else if (omega_count == 1) {
+        snprintf(buffer, buffer_size, "w + %zu", finite_part);
     } else {
-        snprintf(buffer, buffer_size, "w*%zu + %zu", k, n);
+        snprintf(buffer, buffer_size, "w*%zu + %zu", omega_count, finite_part);
     }
 }
 

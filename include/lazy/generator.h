@@ -132,14 +132,14 @@ class PrependGenerator : public Generator<T>, public OrdinalIndexable<T> {
 template <class T>
 class InsertAtGenerator : public Generator<T>, public OrdinalIndexable<T> {
     private:
-        size_t inject_position;
+        Ordinal inject_position;
         Generator<T>* upstream;
         Generator<T>* injected;
         Ordinal injected_length;
         size_t pos;
     public:
-        InsertAtGenerator(size_t inject_position, const T& item, Generator<T>* upstream);
-        InsertAtGenerator(size_t inject_position, Generator<T>* injected, Ordinal injected_length, Generator<T>* upstream);
+        InsertAtGenerator(Ordinal inject_position, const T& item, Generator<T>* upstream);
+        InsertAtGenerator(Ordinal inject_position, Generator<T>* injected, Ordinal injected_length, Generator<T>* upstream);
 
         size_t position() const override { return pos; }
         bool has_next() const override;
@@ -246,7 +246,6 @@ class ConcatGenerator : public Generator<T>, public OrdinalIndexable<T> {
 
         ~ConcatGenerator() override;
 };
-
 
 #include "generator.tpp"
 

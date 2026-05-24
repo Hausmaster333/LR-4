@@ -3,7 +3,7 @@
 #include "memory/alloc_event_stream.h"
 #include <gtest/gtest.h>
 
-// =================== MemoryTapeBasicTest ===================
+// =================== MemoryTapeBasicTest
 
 TEST(MemoryTapeBasicTest, ZeroCapacityThrows) {
     EXPECT_THROW(MemoryTape(0), std::invalid_argument);
@@ -70,19 +70,12 @@ TEST(MemoryTapeBasicTest, ResetEmptiesTape) {
     EXPECT_EQ(t.alloc(1, AllocStrategy::FirstFit), 0);
 }
 
-// =================== MemoryTapeStrategyTest ===================
+// =================== MemoryTapeStrategyTest
 // Раскладка [F F U U F F F F U U]: cap=10, два блока по 2.
 
 namespace {
     MemoryTape make_layout_10() {
         MemoryTape t(10);
-        // alloc 2 - start 0 (id=0)
-        // alloc 2 - start 2 (id=1)
-        // alloc 4 - start 4 (id=2)
-        // alloc 2 - start 8 (id=3)
-        // free id=0 - освободит [0-1]
-        // free id=2 - освободит [4-7]
-        // итог: [F F U U F F F F U U]
         t.alloc(2, AllocStrategy::FirstFit);   // [0-1] id=0
         t.alloc(2, AllocStrategy::FirstFit);   // [2-3] id=1
         t.alloc(4, AllocStrategy::FirstFit);   // [4-7] id=2
@@ -106,7 +99,7 @@ TEST(MemoryTapeStrategyTest, BestFitTakesSmallestRun) {
     MemoryTape t = make_layout_10();
     int id = t.alloc(2, AllocStrategy::BestFit);
     EXPECT_GE(id, 0);
-    // Run длины 2 в [0..1] = best match; не должны занять [4..7] длины 4.
+    // Run длины 2 в [0-1] = best match, не должны занять [4-7] длины 4.
     EXPECT_TRUE(t.get_cell(0).used);
     EXPECT_TRUE(t.get_cell(1).used);
     EXPECT_FALSE(t.get_cell(4).used);
@@ -123,7 +116,7 @@ TEST(MemoryTapeStrategyTest, WorstFitTakesLargestRun) {
     EXPECT_TRUE(t.get_cell(5).used);
 }
 
-// =================== MemoryTapeFragmentationTest ===================
+// ===================
 
 TEST(MemoryTapeFragmentationTest, EmptyTapeZeroFrag) {
     MemoryTape t(8);
@@ -139,11 +132,10 @@ TEST(MemoryTapeFragmentationTest, FullTapeZeroFrag) {
 TEST(MemoryTapeFragmentationTest, SingleRunZeroFrag) {
     MemoryTape t(8);
     t.alloc(3, AllocStrategy::FirstFit);
-    // Свободные [3..7] = один run длины 5, free=5, max_run=5 → frag=0.
     EXPECT_DOUBLE_EQ(t.fragmentation(), 0.0);
 }
 
-// =================== AllocEventStreamTest ===================
+// =================== AllocEventStreamTest
 
 TEST(AllocEventStreamTest, ConsistentForSameSeed) {
     LazySequence<AllocEvent>* a = make_alloc_event_stream(12345ULL, 32, 5, 70);
@@ -176,7 +168,6 @@ TEST(AllocEventStreamTest, ProportionRoughly70Alloc) {
             EXPECT_LT(e.payload, 32);
         }
     }
-    // Допуск ±10% от 700.
     EXPECT_GE(alloc_count, 600);
     EXPECT_LE(alloc_count, 800);
 
@@ -184,15 +175,9 @@ TEST(AllocEventStreamTest, ProportionRoughly70Alloc) {
 }
 
 TEST(MemoryTapeFragmentationTest, TwoEqualRunsHalfFrag) {
-    // cap=4, состояние [F U F U]: free=2, max_run=1, frag = 1 - 1/2 = 0.5
+    // cap=4, состояние [F U F U]: free=2, max_run=1, frag = 1 - 0.5 = 0.5
     MemoryTape t(4);
-    int a = t.alloc(1, AllocStrategy::FirstFit);  // [0] id=0
-    int b = t.alloc(1, AllocStrategy::FirstFit);  // [1] id=1
-    t.alloc(1, AllocStrategy::FirstFit);          // [2] id=2
-    t.alloc(1, AllocStrategy::FirstFit);          // [3] id=3
-    t.free(a);  // free [0]
-    t.free(b);  // free [1] — теперь run [0..1] длины 2, не подходит для теста.
-    // Перестрою:
+
     t.reset();
     int x = t.alloc(1, AllocStrategy::FirstFit);  // [0]
     t.alloc(1, AllocStrategy::FirstFit);          // [1]

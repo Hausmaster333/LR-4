@@ -47,9 +47,12 @@ class LazySequence : public Sequence<T> {
 
         LazySequence<T>* append(const T& item) override; // На inf item_idx = (w, 0)
         LazySequence<T>* prepend(const T& item) override;
+
         LazySequence<T>* insert_at(const T& item, int index) override;
-        // Длина по универсальной ординальной формуле: p + other.length + (this.length - p).
+        LazySequence<T>* insert_at(const T& item, Ordinal position);
+
         LazySequence<T>* insert_at(LazySequence<T>* other, int index);
+        LazySequence<T>* insert_at(LazySequence<T>* other, Ordinal position);
 
         // ========= throw logic_error
         const T& get_last() const override;
@@ -77,7 +80,7 @@ class LazySequence : public Sequence<T> {
         LazySequence<T>* get_sub_sequence(int start, int end);
 
         LazySequence<T>* take(int n);     // Финитизация первых n элементов в SourceGen.
-        LazySequence<T>* take(Ordinal limit);  // Для omega_part > 0 - просто новый LazySequence с ограниченной длиной (без доп. wrapper-генератора).
+        LazySequence<T>* take(Ordinal limit);  // Для omega_part > 0 - просто новый LazySequence с ограниченной длиной
 
         // concat(other): универсальная цепочка ConcatGenerator(this.gen, this.length, other.gen).
         // Длина = this.length + other.length (ординально). Цепочки concat дают ω·k.
@@ -86,7 +89,7 @@ class LazySequence : public Sequence<T> {
         template <class U>
         LazySequence<U>* map(std::function<U(const T&)> func);
 
-        // where(pred): длина = base upper bound; реальное число известно только при материализации.
+        // where(pred): реальное длина известно только при материализации.
         LazySequence<T>* where(std::function<bool(const T&)> pred);
 
         template <class U, class R>
@@ -96,8 +99,6 @@ class LazySequence : public Sequence<T> {
 
         ~LazySequence() override;
 
-        // Адаптер LazySequence -> IEnumerator. move_next лениво материализует через owner->get(index).
-        // Корректно ловит out_of_range при exhaustion (потенциально-бесконечные потоки).
         class Enumerator : public IEnumerator<T> {
             private:
                 LazySequence<T>* owner;

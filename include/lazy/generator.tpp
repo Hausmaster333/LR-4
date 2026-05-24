@@ -214,7 +214,7 @@ PrependGenerator<T>::~PrependGenerator() {
 // =================
 
 template <class T>
-InsertAtGenerator<T>::InsertAtGenerator(size_t inject_position, const T& item, Generator<T>* upstream)
+InsertAtGenerator<T>::InsertAtGenerator(Ordinal inject_position, const T& item, Generator<T>* upstream)
     : inject_position(inject_position), upstream(upstream), injected(nullptr), injected_length(Ordinal::finite(1)), pos(0) {
     if (upstream == nullptr) throw std::invalid_argument("Upstream is nullptr");
 
@@ -224,7 +224,7 @@ InsertAtGenerator<T>::InsertAtGenerator(size_t inject_position, const T& item, G
 }
 
 template <class T>
-InsertAtGenerator<T>::InsertAtGenerator(size_t inject_position, Generator<T>* injected, Ordinal injected_length, Generator<T>* upstream)
+InsertAtGenerator<T>::InsertAtGenerator(Ordinal inject_position, Generator<T>* injected, Ordinal injected_length, Generator<T>* upstream)
     : inject_position(inject_position), upstream(upstream), injected(injected), injected_length(injected_length), pos(0) {
     if (upstream == nullptr) throw std::invalid_argument("Upstream is nullptr");
     if (injected == nullptr) throw std::invalid_argument("Injected is nullptr");
@@ -233,27 +233,19 @@ InsertAtGenerator<T>::InsertAtGenerator(size_t inject_position, Generator<T>* in
 template <class T>
 bool InsertAtGenerator<T>::has_next() const {
     Ordinal pos_ord = Ordinal::finite(pos);
-    Ordinal injection_start = Ordinal::finite(inject_position);
-    Ordinal injection_end = injection_start + injected_length;
+    Ordinal injection_end = inject_position + injected_length;
 
-    if (pos_ord < injection_start) {
-        return upstream->has_next();
-    }
-
-    if (pos_ord < injection_end) {
-        return injected->has_next();
-    }
-
+    if (pos_ord < inject_position) return upstream->has_next();
+    if (pos_ord < injection_end) return injected->has_next();
     return upstream->has_next();
 }
 
 template <class T>
 T InsertAtGenerator<T>::get_next() {
     Ordinal pos_ord = Ordinal::finite(pos);
-    Ordinal injection_start = Ordinal::finite(inject_position);
-    Ordinal injection_end = injection_start + injected_length;
+    Ordinal injection_end = inject_position + injected_length;
 
-    if (pos_ord < injection_start) {
+    if (pos_ord < inject_position) {
         if (!upstream->has_next()) throw std::out_of_range("Upstream exhausted before inject_position");
 
         pos++;
@@ -262,7 +254,7 @@ T InsertAtGenerator<T>::get_next() {
 
     if (pos_ord < injection_end) {
         if (!injected->has_next()) throw std::out_of_range("Injected exhausted unexpectedly");
-
+    
         pos++;
         return injected->get_next();
     }
@@ -276,42 +268,26 @@ T InsertAtGenerator<T>::get_next() {
 template <class T>
 Option<T> InsertAtGenerator<T>::try_get_next() {
     if (!has_next()) return Option<T>::None();
-
     return Option<T>::Some(get_next());
 }
 
 template <class T>
 T InsertAtGenerator<T>::get_at(Ordinal idx) const {
-    Ordinal injection_start = Ordinal::finite(inject_position);
-    Ordinal injection_end = injection_start + injected_length;
+    Ordinal injection_end = inject_position + injected_length;
 
-    if (idx < injection_start) {
-        return materialize_at(upstream, idx);
-    }
-
-    if (idx < injection_end) {
-        return materialize_at(injected, idx - injection_start);
-    }
-
-    return materialize_at(upstream, injection_start + (idx - injection_end));
+    if (idx < inject_position) return materialize_at(upstream, idx);
+    if (idx < injection_end) return materialize_at(injected, idx - inject_position);
+    return materialize_at(upstream, inject_position + (idx - injection_end));
 }
 
 template <class T>
 Ordinal InsertAtGenerator<T>::estimate_remaining() const {
     Ordinal pos_ord = Ordinal::finite(pos);
-    Ordinal injection_start = Ordinal::finite(inject_position);
-    Ordinal injection_end = injection_start + injected_length;
-
+    Ordinal injection_end = inject_position + injected_length;
     Ordinal upstream_remaining = upstream->estimate_remaining();
 
-    if (pos_ord < injection_start) {
-        return upstream_remaining + injected_length;
-    }
-
-    if (pos_ord < injection_end) {
-        return (injection_end - pos_ord) + upstream_remaining;
-    }
-
+    if (pos_ord < inject_position) return upstream_remaining + injected_length;
+    if (pos_ord < injection_end) return (injection_end - pos_ord) + upstream_remaining;
     return upstream_remaining;
 }
 

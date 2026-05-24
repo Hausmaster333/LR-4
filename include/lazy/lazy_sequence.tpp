@@ -235,7 +235,7 @@ T LazySequence<T>::get(Ordinal idx) {
     }
 
     auto* indexable = dynamic_cast<OrdinalIndexable<T>*>(generator);
-    if (indexable == nullptr) throw std::logic_error("Ordinal index requires an ordinabale generator (WhereGenerator is non-indexable)");
+    if (indexable == nullptr) throw std::logic_error("Ordinal index requires an ordinable generator (WhereGenerator is non-indexable)");
 
     return indexable->get_at(idx);
 }
@@ -332,49 +332,50 @@ template <class T>
 LazySequence<T>* LazySequence<T>::insert_at(const T& item, int index) {
     if (index < 0) throw std::out_of_range("Index out of range");
 
-    Ordinal idx_ord = Ordinal::finite(static_cast<size_t>(index));
+    return insert_at(item, Ordinal::finite(static_cast<size_t>(index)));
+}
 
-    if (idx_ord > length) throw std::out_of_range("Index out of range");
-    if (idx_ord == length) return append(item);
+template <class T>
+LazySequence<T>* LazySequence<T>::insert_at(const T& item, Ordinal position) {
+    if (position > length) throw std::out_of_range("Position out of range");
+    if (position == length) return append(item);
+    if (generator == nullptr) throw std::logic_error("Unreachable (empty, non-zero position)");
 
-    if (generator == nullptr) throw std::logic_error("Unreachable (empty, non-zero idx)");
-
-    size_t target_index = static_cast<size_t>(index);
-    Generator<T>* base_clone = generator->clone();
-    Generator<T>* new_gen = new InsertAtGenerator<T>(target_index, item, base_clone);
-    Ordinal new_length = Ordinal::finite(1) + length;
+    Generator<T>* new_gen = new InsertAtGenerator<T>(position, item, generator->clone());
+    Ordinal new_length = position + Ordinal::finite(1) + (length - position);
 
     return new LazySequence<T>(new_gen, new_length, cache.get_capacity());
 }
 
 template <class T>
 LazySequence<T>* LazySequence<T>::insert_at(LazySequence<T>* other, int index) {
-    if (other == nullptr) throw std::invalid_argument("Other is nullptr");
     if (index < 0) throw std::out_of_range("Index < 0");
-    if (Ordinal::finite(static_cast<size_t>(index)) > length) throw std::out_of_range("Index past end");
 
-    size_t target_index = static_cast<size_t>(index);
+    return insert_at(other, Ordinal::finite(static_cast<size_t>(index)));
+}
+
+template <class T>
+LazySequence<T>* LazySequence<T>::insert_at(LazySequence<T>* other, Ordinal position) {
+    if (other == nullptr) throw std::invalid_argument("Other is nullptr");
+    if (position > length) throw std::out_of_range("Position past end");
 
     if (other->generator == nullptr) {
         Generator<T>* this_clone = (generator != nullptr) ? generator->clone() : nullptr;
+
         return new LazySequence<T>(this_clone, length, cache.get_capacity());
     }
 
     if (generator == nullptr) {
-        if (target_index != 0) throw std::logic_error("Empty base, non-zero index");
+        if (position != Ordinal::zero()) throw std::logic_error("Empty base, non-zero position");
 
-        Generator<T>* other_clone = other->generator->clone();
-        return new LazySequence<T>(other_clone, other->length, cache.get_capacity());
+        return new LazySequence<T>(other->generator->clone(), other->length, cache.get_capacity());
     }
 
-    // Длина = target_idx + other.length + (this.length - target_idx).
-    Generator<T>* this_base_clone = generator->clone();
-    Generator<T>* other_clone = other->generator->clone();
-    Generator<T>* new_gen = new InsertAtGenerator<T>(target_index, other_clone, other->length, this_base_clone);
+    Generator<T>* new_gen = new InsertAtGenerator<T>(
+        position, other->generator->clone(), other->length, generator->clone());
 
-    Ordinal target_index_ord = Ordinal::finite(target_index);
-    Ordinal remainder = length - target_index_ord;
-    Ordinal new_length = target_index_ord + other->length + remainder;
+    Ordinal remainder = length - position;
+    Ordinal new_length = position + other->length + remainder;
 
     return new LazySequence<T>(new_gen, new_length, cache.get_capacity());
 }
@@ -387,17 +388,20 @@ LazySequence<T>* LazySequence<T>::concat(LazySequence<T>* other) {
 
     if (other->generator == nullptr) {
         Generator<T>* this_clone = (generator != nullptr) ? generator->clone() : nullptr;
+
         return new LazySequence<T>(this_clone, length, cache.get_capacity());
     }
 
     if (generator == nullptr) {
         Generator<T>* other_clone = other->generator->clone();
+
         return new LazySequence<T>(other_clone, other->length, cache.get_capacity());
     }
 
     Generator<T>* new_gen = new ConcatGenerator<T>(generator->clone(), length, other->generator->clone());
 
     Ordinal new_length = length + other->length;
+
     return new LazySequence<T>(new_gen, new_length, cache.get_capacity());
 }
 
