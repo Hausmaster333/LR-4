@@ -106,7 +106,7 @@ TEST(MemoryTapeStrategyTest, BestFitTakesSmallestRun) {
     MemoryTape t = make_layout_10();
     int id = t.alloc(2, AllocStrategy::BestFit);
     EXPECT_GE(id, 0);
-    // Run длины 2 в [0..1] = best match; не должны занять [4..7] длины 4.
+    // Run длины 2 в [0-1] = best match, не должны занять [4-7] длины 4.
     EXPECT_TRUE(t.get_cell(0).used);
     EXPECT_TRUE(t.get_cell(1).used);
     EXPECT_FALSE(t.get_cell(4).used);

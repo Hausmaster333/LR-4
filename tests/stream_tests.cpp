@@ -10,9 +10,6 @@
 #include <cstdio>     // для tmpnam/remove
 #include <gtest/gtest.h>
 
-// Smoke-тесты на exception-типы — реальные стрим-тесты добавятся
-// по мере реализации подклассов.
-
 TEST(StreamExceptionsTest, TypesDistinct) {
     EXPECT_NO_THROW({
         try { throw EndOfStream(); }
@@ -191,8 +188,8 @@ TEST(LazyReadStreamTest, InfiniteReadFibonacci) {
     int init[] = {0, 1};
     MutableArraySequence<int> initial(init, 2);
 
-    auto rule = [](Sequence<int>* w) -> int {
-        return w->get_first() + w->get_last();
+    auto rule = [](Sequence<int>* window) -> int {
+        return window->get_first() + window->get_last();
     };
 
     LazySequence<int> fib(rule, &initial);
@@ -214,8 +211,8 @@ TEST(LazyReadStreamTest, SeekForwardOnInfinite) {
     int init[] = {0, 1};
     MutableArraySequence<int> initial(init, 2);
 
-    auto rule = [](Sequence<int>* w) -> int {
-        return w->get_first() + w->get_last();
+    auto rule = [](Sequence<int>* window) -> int {
+        return window->get_first() + window->get_last();
     };
 
     LazySequence<int> fib(rule, &initial);

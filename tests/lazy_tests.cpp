@@ -2,6 +2,10 @@
 #include "lazy/sliding_cache.h"
 #include <gtest/gtest.h>
 
+TEST(Test, Test) {
+    LazySequence<int> c(6);
+    c.get_first();
+}
 // ================ SlidingCache tests
 
 TEST(SlidingCacheTest, ZeroCapacityThrows) {
@@ -332,8 +336,8 @@ TEST(LazySequenceTest, InfiniteFibonacci_Basic) {
     int init[] = {0, 1};
     MutableArraySequence<int> initial(init, 2);
 
-    auto fib_rule = [](Sequence<int>* w) -> int {
-        return w->get_first() + w->get_last();
+    auto fib_rule = [](Sequence<int>* window) -> int {
+        return window->get_first() + window->get_last();
     };
 
     LazySequence<int> fib(fib_rule, &initial, /*cache_capacity*/ 16);
@@ -353,8 +357,8 @@ TEST(LazySequenceTest, InfiniteFibonacci_GetCountThrows) {
     int init[] = {0, 1};
     MutableArraySequence<int> initial(init, 2);
 
-    auto rule = [](Sequence<int>* w) -> int {
-        return w->get_first() + w->get_last();
+    auto rule = [](Sequence<int>* window) -> int {
+        return window->get_first() + window->get_last();
     };
 
     LazySequence<int> fib(rule, &initial);
@@ -368,8 +372,8 @@ TEST(LazySequenceTest, InfiniteFibonacci_GetFirstWorks) {
     int init[] = {0, 1};
     MutableArraySequence<int> initial(init, 2);
 
-    auto rule = [](Sequence<int>* w) -> int {
-        return w->get_first() + w->get_last();
+    auto rule = [](Sequence<int>* window) -> int {
+        return window->get_first() + window->get_last();
     };
 
     LazySequence<int> fib(rule, &initial);
@@ -383,8 +387,8 @@ TEST(LazySequenceTest, InfiniteFibonacci_EvictionAfterLargeIndex) {
     int init[] = {0, 1};
     MutableArraySequence<int> initial(init, 2);
 
-    auto rule = [](Sequence<int>* w) -> int {
-        return w->get_first() + w->get_last();
+    auto rule = [](Sequence<int>* window) -> int {
+        return window->get_first() + window->get_last();
     };
 
     LazySequence<int> fib(rule, &initial, /*cache_capacity*/ 4);
@@ -400,8 +404,8 @@ TEST(LazySequenceTest, AppendOnInfinite_TailHangs) {
     int init[] = {0, 1};
     MutableArraySequence<int> initial(init, 2);
 
-    auto rule = [](Sequence<int>* w) -> int {
-        return w->get_first() + w->get_last();
+    auto rule = [](Sequence<int>* window) -> int {
+        return window->get_first() + window->get_last();
     };
 
     LazySequence<int> fib(rule, &initial);
@@ -423,8 +427,8 @@ TEST(LazySequenceTest, AppendOnInfinite_OrdinallyAccessible) {
     int init[] = {0, 1};
     MutableArraySequence<int> initial(init, 2);
 
-    auto rule = [](Sequence<int>* w) -> int {
-        return w->get_first() + w->get_last();
+    auto rule = [](Sequence<int>* window) -> int {
+        return window->get_first() + window->get_last();
     };
 
     LazySequence<int> fib(rule, &initial);
@@ -480,8 +484,8 @@ TEST(LazySequenceTest, PrependOnInfinite) {
     int init[] = {0, 1};
     MutableArraySequence<int> initial(init, 2);
 
-    auto rule = [](Sequence<int>* w) -> int {
-        return w->get_first() + w->get_last();
+    auto rule = [](Sequence<int>* window) -> int {
+        return window->get_first() + window->get_last();
     };
 
     LazySequence<int> fib(rule, &initial);
@@ -503,8 +507,8 @@ TEST(LazySequenceTest, InsertAtMiddleOfInfinite) {
     int init[] = {0, 1};
     MutableArraySequence<int> initial(init, 2);
 
-    auto rule = [](Sequence<int>* w) -> int {
-        return w->get_first() + w->get_last();
+    auto rule = [](Sequence<int>* window) -> int {
+        return window->get_first() + window->get_last();
     };
 
     LazySequence<int> fib(rule, &initial);
@@ -549,8 +553,8 @@ TEST(LazySequenceTest, MapOfInfinite_TakeWorks) {
     int init[] = {0, 1};
     MutableArraySequence<int> initial(init, 2);
 
-    auto rule = [](Sequence<int>* w) -> int {
-        return w->get_first() + w->get_last();
+    auto rule = [](Sequence<int>* window) -> int {
+        return window->get_first() + window->get_last();
     };
 
     LazySequence<int> fib(rule, &initial);
@@ -574,8 +578,8 @@ TEST(LazySequenceTest, WhereOfInfinite_TakeFirstEvens) {
     int init[] = {0, 1};
     MutableArraySequence<int> initial(init, 2);
 
-    auto rule = [](Sequence<int>* w) -> int {
-        return w->get_first() + w->get_last();
+    auto rule = [](Sequence<int>* window) -> int {
+        return window->get_first() + window->get_last();
     };
 
     LazySequence<int> fib(rule, &initial);
@@ -597,8 +601,8 @@ TEST(LazySequenceTest, ZipInfiniteWithFinite_LengthEqualsMin) {
     int init[] = {0, 1};
     MutableArraySequence<int> initial(init, 2);
 
-    auto rule = [](Sequence<int>* w) -> int {
-        return w->get_first() + w->get_last();
+    auto rule = [](Sequence<int>* window) -> int {
+        return window->get_first() + window->get_last();
     };
 
     LazySequence<int> fib(rule, &initial);
@@ -623,8 +627,8 @@ TEST(LazySequenceTest, ConcatFiniteWithInfinite_LengthInfinite) {
     int init[] = {0, 1};
     MutableArraySequence<int> initial(init, 2);
 
-    auto rule = [](Sequence<int>* w) -> int {
-        return w->get_first() + w->get_last();
+    auto rule = [](Sequence<int>* window) -> int {
+        return window->get_first() + window->get_last();
     };
 
     LazySequence<int> fib(rule, &initial);
@@ -657,8 +661,8 @@ TEST(LazySequenceTest, ReduceOnInfiniteThrows) {
     int init[] = {0, 1};
     MutableArraySequence<int> initial(init, 2);
 
-    auto rule = [](Sequence<int>* w) -> int {
-        return w->get_first() + w->get_last();
+    auto rule = [](Sequence<int>* window) -> int {
+        return window->get_first() + window->get_last();
     };
 
     LazySequence<int> fib(rule, &initial);
@@ -686,8 +690,8 @@ TEST(LazySequenceTest, EnumeratorOverTakeFromInfinite) {
     int init[] = {0, 1};
     MutableArraySequence<int> initial(init, 2);
 
-    auto rule = [](Sequence<int>* w) -> int {
-        return w->get_first() + w->get_last();
+    auto rule = [](Sequence<int>* window) -> int {
+        return window->get_first() + window->get_last();
     };
 
     LazySequence<int> fib(rule, &initial);
@@ -764,7 +768,7 @@ TEST(LazySequenceTest, BackwardJumpAfterEvictionThrowsForRecurrence) {
     // после eviction должен бросать.
     MutableArraySequence<int> initial;
     initial.append(0);
-    auto rule = [](Sequence<int>* w) -> int { return w->get_last() + 1; };
+    auto rule = [](Sequence<int>* window) -> int { return window->get_last() + 1; };
     LazySequence<int> seq(rule, &initial, 2); // cache_capacity 2
 
     EXPECT_EQ(seq.get(10), 10); // окно сдвинулось

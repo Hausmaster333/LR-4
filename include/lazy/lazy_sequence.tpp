@@ -235,7 +235,7 @@ T LazySequence<T>::get(Ordinal idx) {
     }
 
     auto* indexable = dynamic_cast<OrdinalIndexable<T>*>(generator);
-    if (indexable == nullptr) throw std::logic_error("Ordinal index requires an ordinabale generator (WhereGenerator is non-indexable)");
+    if (indexable == nullptr) throw std::logic_error("Ordinal index requires an ordinable generator (WhereGenerator is non-indexable)");
 
     return indexable->get_at(idx);
 }
@@ -357,6 +357,7 @@ LazySequence<T>* LazySequence<T>::insert_at(LazySequence<T>* other, int index) {
 
     if (other->generator == nullptr) {
         Generator<T>* this_clone = (generator != nullptr) ? generator->clone() : nullptr;
+
         return new LazySequence<T>(this_clone, length, cache.get_capacity());
     }
 

@@ -9,11 +9,11 @@
 inline ImU32 color_for_block(int block_id) {
     if (block_id < 0) return IM_COL32(50, 55, 65, 255);
     
-    uint32_t h = static_cast<uint32_t>(block_id) * 2654435761u;
-    int r = 80 + static_cast<int>((h)        & 0x7F);
-    int g = 80 + static_cast<int>((h >> 7)   & 0x7F);
-    int b = 80 + static_cast<int>((h >> 14)  & 0x7F);
-    return IM_COL32(r, g, b, 255);
+    uint32_t hash = static_cast<uint32_t>(block_id) * 2654435761u;
+    int red   = 80 + static_cast<int>((hash)        & 0x7F);
+    int green = 80 + static_cast<int>((hash >> 7)   & 0x7F);
+    int blue  = 80 + static_cast<int>((hash >> 14)  & 0x7F);
+    return IM_COL32(red, green, blue, 255);
 }
 
 // Рендер ленты памяти квадратиками. Фиксированный размер клетки и фикс.
@@ -36,16 +36,15 @@ inline void render_memory_tape(const MemoryTape& tape) {
         int col = i % per_row;
         ImVec2 p1(origin.x + col * (cell_w + spacing), origin.y + row * (cell_h + spacing));
         ImVec2 p2(p1.x + cell_w, p1.y + cell_h);
-        const Cell& c = tape.get_cell(i);
-        int block_id = c.used ? c.block_id : -1;
+        const Cell& cell = tape.get_cell(i);
+        int block_id = cell.used ? cell.block_id : -1;
         draw->AddRectFilled(p1, p2, color_for_block(block_id));
 
-        if (draw_id && c.used) {
-            char buf[8];
-            snprintf(buf, sizeof(buf), "%d", c.block_id);
-            // Точное центрирование через метрики текущего ImGui-шрифта.
-            ImVec2 ts = ImGui::CalcTextSize(buf);
-            draw->AddText(ImVec2(p1.x + (cell_w - ts.x) * 0.5f, p1.y + (cell_h - ts.y) * 0.5f), IM_COL32(240, 240, 240, 255), buf);
+        if (draw_id && cell.used) {
+            char text_buffer[8];
+            snprintf(text_buffer, sizeof(text_buffer), "%d", cell.block_id);
+            ImVec2 text_size = ImGui::CalcTextSize(text_buffer);
+            draw->AddText(ImVec2(p1.x + (cell_w - text_size.x) * 0.5f, p1.y + (cell_h - text_size.y) * 0.5f), IM_COL32(240, 240, 240, 255), text_buffer);
         }
     }
 

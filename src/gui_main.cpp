@@ -508,7 +508,7 @@ int main() {
     float xscale = 1.5f, yscale = 1.5f;
     GLFWmonitor* monitor = glfwGetPrimaryMonitor();
     if (monitor != nullptr) glfwGetMonitorContentScale(monitor, &xscale, &yscale);
-    float dpi_scale = (xscale > 0.0f) ? xscale : 1.0f;
+    float dpi_scale = (xscale > 0.0f) ? xscale : 3.0f;
     ImGui::GetStyle().ScaleAllSizes(dpi_scale);
     io.FontGlobalScale = dpi_scale;
 
