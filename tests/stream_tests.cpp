@@ -7,7 +7,7 @@
 #include "streams/file_write_stream.h"
 #include "lazy/lazy_sequence.h"
 #include "core/sequence.h"
-#include <cstdio>     // для tmpnam/remove
+#include <cstdio>
 #include <gtest/gtest.h>
 
 TEST(StreamExceptionsTest, TypesDistinct) {

@@ -47,8 +47,12 @@ class LazySequence : public Sequence<T> {
 
         LazySequence<T>* append(const T& item) override; // На inf item_idx = (w, 0)
         LazySequence<T>* prepend(const T& item) override;
-        LazySequence<T>* insert_at(const T& item, int index) override;        
-        LazySequence<T>* insert_at(LazySequence<T>* other, int index); // Длина по универсальной ординальной формуле: p + other.length + (this.length - p)
+
+        LazySequence<T>* insert_at(const T& item, int index) override;
+        LazySequence<T>* insert_at(const T& item, Ordinal position);
+
+        LazySequence<T>* insert_at(LazySequence<T>* other, int index);
+        LazySequence<T>* insert_at(LazySequence<T>* other, Ordinal position);
 
         // ========= throw logic_error
         const T& get_last() const override;
