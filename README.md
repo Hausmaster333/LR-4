@@ -59,7 +59,7 @@ Linux — аналогично через `make`.
 
 ### Демонстрация
 
-<img width="3761" height="1953" alt="image" src="https://github.com/user-attachments/assets/f7fdd63c-d80a-434d-a693-8fccd46fb257" />
+<img width="3216" height="1156" alt="image" src="https://github.com/user-attachments/assets/19bc9561-188f-471f-93ac-8123f7ea0b5d" />
 
 ### Memory Tape Allocator
 
