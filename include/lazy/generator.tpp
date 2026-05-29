@@ -41,8 +41,8 @@ SourceGenerator<T>* SourceGenerator<T>::own(Sequence<T>* source) {
 template <class T>
 T SourceGenerator<T>::get_next() {
     if (!has_next()) throw std::out_of_range("No more elements");
+    if (!owned_iter->move_next()) throw std::logic_error("Iterator out of sync with owned_count");
 
-    owned_iter->move_next();
     T value = owned_iter->get_current();
     pos++;
 
@@ -128,11 +128,10 @@ T RecurrenceGenerator<T>::get_next() {
         return value;
     }
 
-    // Считаем элемент, после чего создаем новое сдвинутое на этот элемент окно
     T next = rule(&window); 
 
     MutableArraySequence<T> new_window;
-    for (size_t index = 1; index < k; index++) { // Обновляем окно
+    for (size_t index = 1; index < k; index++) {
         new_window.append(window.get(static_cast<int>(index)));
     }
 
@@ -268,6 +267,7 @@ T InsertAtGenerator<T>::get_next() {
 template <class T>
 Option<T> InsertAtGenerator<T>::try_get_next() {
     if (!has_next()) return Option<T>::None();
+
     return Option<T>::Some(get_next());
 }
 
@@ -277,6 +277,7 @@ T InsertAtGenerator<T>::get_at(Ordinal idx) const {
 
     if (idx < inject_position) return materialize_at(upstream, idx);
     if (idx < injection_end) return materialize_at(injected, idx - inject_position);
+
     return materialize_at(upstream, inject_position + (idx - injection_end));
 }
 
@@ -288,6 +289,7 @@ Ordinal InsertAtGenerator<T>::estimate_remaining() const {
 
     if (pos_ord < inject_position) return upstream_remaining + injected_length;
     if (pos_ord < injection_end) return (injection_end - pos_ord) + upstream_remaining;
+
     return upstream_remaining;
 }
 
@@ -449,6 +451,7 @@ T ZipGenerator<U, V, T>::get_at(Ordinal idx) const {
 template <class T>
 ConcatGenerator<T>::ConcatGenerator(Generator<T>* left, Ordinal left_length, Generator<T>* right)
     : left(left), left_length(left_length), right(right), pos(0) {
+
     if (left == nullptr || right == nullptr) throw std::invalid_argument("Nullptr operand in concatenation");
 }
 

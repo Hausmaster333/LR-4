@@ -7,6 +7,12 @@
 #include "memory/alloc_event.h"
 #include "memory/alloc_event_stream.h"
 #include "streams/lazy_read_stream.h"
+#include "streams/sequence_stream.h"
+#include "streams/string_operations.h"
+#include "streams/sequence_read_stream.h"
+#include "streams/sequence_write_stream.h"
+#include "compression/lzw.h"
+#include "compression/lzw_stream.h"
 #include "lazy/lazy_sequence.h"
 #include "lazy/sliding_cache.h"
 #include "core/sequence.h"
@@ -15,11 +21,10 @@
 #include <cstdarg>
 #include <cstdlib>
 #include <cstdint>
+#include <string>
 #include <functional>
 #include <stdexcept>
 #include <iostream>
-
-// ============================
 
 static int g_mem_capacity = 64;
 static int g_mem_alloc_size = 3;
@@ -184,7 +189,7 @@ void draw_memory_window() {
     ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(160, 30, 30, 255));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(200, 40, 40, 255));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(220, 60, 60, 255));
-    bool chaos_clicked = ImGui::Button("DO NOT PRESS UNDER ANY CIRCUMSTANCES");
+    bool chaos_clicked = ImGui::Button("DO NOT PRESS NEVER");
     ImGui::PopStyleColor(3);
     if (chaos_clicked) memory_fragment_chaos();
 
@@ -473,11 +478,378 @@ void draw_lazy_window() {
     ImGui::End();
 }
 
+// ============================ Stream API и LZW
+
+struct StreamLogEntry {
+    char text[128]; 
+};
+static const int g_stream_log_max = 200;
+static SlidingCache<StreamLogEntry> g_pipeline_log(g_stream_log_max);
+static SlidingCache<StreamLogEntry> g_lzw_log(g_stream_log_max);
+
+void pipeline_log(const char* fmt, ...) {
+    StreamLogEntry entry;
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(entry.text, sizeof(entry.text), fmt, args);
+    va_end(args);
+    g_pipeline_log.push(entry);
+}
+
+void lzw_log(const char* fmt, ...) {
+    StreamLogEntry entry;
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(entry.text, sizeof(entry.text), fmt, args);
+    va_end(args);
+    g_lzw_log.push(entry);
+}
+
+static char g_pipeline_input[512] = "banana apple Avocado cherry Apricot BLUEBERRY fig";
+static int g_pipeline_filter_idx = 0;
+static int g_pipeline_map_idx = 0;
+static int g_pipeline_take_n = 5;
+static bool g_pipeline_do_sort = true;
+static char g_pipeline_starts_with[64] = "A";
+static int g_pipeline_min_length = 5;
+static const char* g_pipeline_filters[] = {"none", "starts_with", "min_length", "not empty"};
+static const char* g_pipeline_maps[] = {"none", "to_upper", "to_lower", "trim"};
+
+static char g_lzw_input[512] = "ABABABABABABABABABABABABABAB";
+static MutableArraySequence<uint16_t> g_lzw_codes; // буфер кодов между compress и decompress
+
+// Логирующий wrapper - пишет в backing и логирует каждый emit.
+// Используется для streaming-демо энкодера, чтобы коды появлялись в логе по мере того как LzwOutputStream их эмитит.
+class LoggingWriteUint16 : public WriteOnlyStream<uint16_t> {
+    private:
+        WriteOnlyStream<uint16_t>* inner;
+    public:
+        LoggingWriteUint16(WriteOnlyStream<uint16_t>* inner) : inner(inner) {}
+
+        void open() override {
+            if (!inner->opened()) inner->open();
+
+            this->is_open = true;
+            this->position = 0;
+        }
+
+        void close() override {
+            inner->close();
+            this->is_open = false;
+            this->position = 0;
+        }
+
+        size_t write(const uint16_t& code) override {
+            lzw_log("  emit code %u", static_cast<unsigned>(code));
+            size_t result = inner->write(code);
+            this->position = result;
+
+            return result;
+        }
+};
+
+// Аналогично для декодера - логирует каждый код, который LzwInputStream
+// потребляет из backing.
+class LoggingReadUint16 : public ReadOnlyStream<uint16_t> {
+    private:
+        ReadOnlyStream<uint16_t>* inner;
+    public:
+        LoggingReadUint16(ReadOnlyStream<uint16_t>* inner) : inner(inner) {}
+
+        void open() override {
+            if (!inner->opened()) inner->open();
+            this->is_open = true;
+            this->position = 0;
+        }
+        void close() override {
+            inner->close();
+            this->is_open = false;
+            this->position = 0;
+        }
+        bool is_end_of_stream() const override { return inner->is_end_of_stream(); }
+        uint16_t read() override {
+            uint16_t code = inner->read();
+            lzw_log("  consume code %u", static_cast<unsigned>(code));
+            this->position++;
+            return code;
+        }
+        bool is_can_seek() const override { return inner->is_can_seek(); }
+        bool is_can_go_back() const override { return inner->is_can_go_back(); }
+        size_t seek(size_t index) override { return inner->seek(index); }
+};
+
+void run_pipeline() {
+    MutableArraySequence<std::string> words;
+    std::string current;
+    for (int i = 0; g_pipeline_input[i] != '\0'; i++) {
+        if (g_pipeline_input[i] == ' ') {
+            if (!current.empty()) {
+                words.append(current);
+                current.clear();
+            }
+        } else {
+            current += g_pipeline_input[i];
+        }
+    }
+    if (!current.empty()) words.append(current);
+
+    if (words.get_count() == 0) {
+        pipeline_log("Empty pipeline input");
+        return;
+    }
+
+    pipeline_log("Pipeline input: %d words", words.get_count());
+
+    auto stream = SequenceStream<std::string>::of(&words);
+
+    // Filter
+    if (g_pipeline_filter_idx == 1) {
+        std::string prefix = g_pipeline_starts_with;
+        stream = std::move(stream.filter(str_ops::starts_with(prefix)));
+        pipeline_log("  filter: starts_with(\"%s\")", prefix.c_str());
+    } else if (g_pipeline_filter_idx == 2) {
+        stream = std::move(stream.filter(str_ops::min_length(g_pipeline_min_length)));
+        pipeline_log("  filter: min_length(%d)", g_pipeline_min_length);
+    } else if (g_pipeline_filter_idx == 3) {
+        stream = std::move(stream.filter(str_ops::is_not_empty()));
+        pipeline_log("  filter: not_empty");
+    }
+
+    // Map
+    if (g_pipeline_map_idx == 1) {
+        stream = std::move(stream.map<std::string>(str_ops::to_upper()));
+        pipeline_log("  map: to_upper");
+    } else if (g_pipeline_map_idx == 2) {
+        stream = std::move(stream.map<std::string>(str_ops::to_lower()));
+        pipeline_log("  map: to_lower");
+    } else if (g_pipeline_map_idx == 3) {
+        stream = std::move(stream.map<std::string>(str_ops::trim()));
+        pipeline_log("  map: trim");
+    }
+
+    // Sort
+    if (g_pipeline_do_sort) {
+        stream = std::move(stream.sorted());
+        pipeline_log("  sorted");
+    }
+
+    // Take
+    if (g_pipeline_take_n > 0) {
+        stream = std::move(stream.take(g_pipeline_take_n));
+        pipeline_log("  take(%d)", g_pipeline_take_n);
+    }
+
+    auto* result = stream.to_array();
+
+    if (result->get_count() == 0) {
+        pipeline_log("  result: (empty)");
+    } else {
+        std::string joined = str_ops::join(result, ", ");
+        pipeline_log("  result [%d]: %s", result->get_count(), joined.c_str());
+    }
+
+    delete result;
+}
+
+int lzw_input_length() {
+    int n = 0;
+    while (g_lzw_input[n] != '\0') {
+        n++;
+    }
+    return n;
+}
+
+void run_lzw_batch_compress() {
+    int input_length = lzw_input_length();
+    if (input_length == 0) {
+        lzw_log("Batch compress: empty input");
+        return;
+    }
+
+    MutableArraySequence<uint8_t> input_bytes;
+    for (int idx = 0; idx < input_length; idx++) {
+        input_bytes.append(static_cast<uint8_t>(g_lzw_input[idx]));
+    }
+
+    auto* compressed = lzw_compress(&input_bytes);
+    int compressed_size = compressed->get_count() * 2;
+    double ratio = static_cast<double>(compressed_size) / static_cast<double>(input_length) * 100.0;
+
+    lzw_log("Batch compress: %d bytes -> %d codes (%d bytes, %.1f%%)", input_length, compressed->get_count(), compressed_size, ratio);
+
+    for (int idx = 0; idx < compressed->get_count(); idx++) {
+        lzw_log("  code[%d] = %u", idx, static_cast<unsigned>(compressed->get(idx)));
+    }
+
+    g_lzw_codes = MutableArraySequence<uint16_t>();
+    for (int idx = 0; idx < compressed->get_count(); idx++) {
+        g_lzw_codes.append(compressed->get(idx));
+    }
+
+    delete compressed;
+}
+
+void run_lzw_streaming_compress() {
+    int input_length = lzw_input_length();
+    if (input_length == 0) {
+        lzw_log("Streaming compress: empty input");
+
+        return;
+    }
+
+    g_lzw_codes = MutableArraySequence<uint16_t>();
+    SequenceWriteStream<uint16_t> raw_backing(&g_lzw_codes);
+    LoggingWriteUint16 backing(&raw_backing);
+    LzwOutputStream compressor(&backing);
+
+    lzw_log("Streaming compress: %d bytes", input_length);
+    compressor.open();
+    for (int idx = 0; idx < input_length; idx++) {
+        compressor.write(static_cast<uint8_t>(g_lzw_input[idx]));
+    }
+    compressor.close();
+
+    int compressed_size = g_lzw_codes.get_count() * 2;
+    double ratio = static_cast<double>(compressed_size) / static_cast<double>(input_length) * 100.0;
+    lzw_log("  total: %d codes (%d bytes, %.1f%%)", g_lzw_codes.get_count(), compressed_size, ratio);
+}
+
+void run_lzw_batch_decompress() {
+    if (g_lzw_codes.get_count() == 0) {
+        lzw_log("Batch decompress: no codes in buffer (compress first)");
+        return;
+    }
+
+    auto* decompressed = lzw_decompress(&g_lzw_codes);
+
+    std::string output;
+    for (int i = 0; i < decompressed->get_count(); i++) {
+        output += static_cast<char>(decompressed->get(i));
+    }
+
+    lzw_log("Batch decompress: %d codes -> %d bytes", g_lzw_codes.get_count(), decompressed->get_count());
+    lzw_log("  output: \"%s\"", output.c_str());
+
+    delete decompressed;
+}
+
+void run_lzw_streaming_decompress() {
+    if (g_lzw_codes.get_count() == 0) {
+        lzw_log("Streaming decompress: no codes in buffer (compress first)");
+
+        return;
+    }
+
+    lzw_log("Streaming decompress: %d codes", g_lzw_codes.get_count());
+
+    SequenceReadStream<uint16_t> raw_backing(&g_lzw_codes);
+    LoggingReadUint16 backing(&raw_backing);
+    LzwInputStream decompressor(&backing);
+
+    decompressor.open();
+    std::string output;
+    while (!decompressor.is_end_of_stream()) {
+        output += static_cast<char>(decompressor.read());
+    }
+    decompressor.close();
+
+    lzw_log("  total: %d bytes, output: \"%s\"", static_cast<int>(output.size()), output.c_str());
+}
+
+void draw_pipeline_window() {
+    ImGui::Begin("Stream API Pipeline");
+
+    ImGui::InputText("Input (words)", g_pipeline_input, sizeof(g_pipeline_input));
+    ImGui::Combo("Filter", &g_pipeline_filter_idx, g_pipeline_filters, 4);
+
+    if (g_pipeline_filter_idx == 1) {
+        ImGui::SetNextItemWidth(150);
+        ImGui::InputText("  prefix", g_pipeline_starts_with, sizeof(g_pipeline_starts_with));
+    } else if (g_pipeline_filter_idx == 2) {
+        ImGui::SetNextItemWidth(100);
+        ImGui::InputInt("  n", &g_pipeline_min_length);
+        if (g_pipeline_min_length < 0) g_pipeline_min_length = 0;
+    }
+
+    ImGui::Combo("Map", &g_pipeline_map_idx, g_pipeline_maps, 4);
+    ImGui::Checkbox("Sort", &g_pipeline_do_sort);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(100);
+    ImGui::InputInt("Take", &g_pipeline_take_n);
+
+    if (ImGui::Button("Run Pipeline")) {
+        try {
+            run_pipeline();
+        } catch (const std::exception& ex) {
+            pipeline_log("Pipeline error: %s", ex.what());
+        }
+    }
+
+    ImGui::Separator();
+    ImGui::Text("Pipeline log (last 20):");
+    if (!g_pipeline_log.is_empty()) {
+        size_t last = g_pipeline_log.get_last_index();
+        size_t first = g_pipeline_log.get_first_index();
+        size_t shown = std::min<size_t>(20, last - first + 1);
+        for (size_t i = last - shown + 1; i <= last; i++) {
+            ImGui::TextUnformatted(g_pipeline_log.get(i).text);
+        }
+    }
+
+    ImGui::End();
+}
+
+void draw_lzw_window() {
+    ImGui::Begin("LZW Compression");
+
+    ImGui::InputText("LZW Input", g_lzw_input, sizeof(g_lzw_input));
+    ImGui::Text("Codes buffer: %d", g_lzw_codes.get_count());
+
+    ImGui::Text("Compress:");
+    ImGui::SameLine();
+    if (ImGui::Button("batch")) {
+        try { run_lzw_batch_compress(); }
+        catch (const std::exception& ex) { lzw_log("error: %s", ex.what()); }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("streaming")) {
+        try { run_lzw_streaming_compress(); }
+        catch (const std::exception& ex) { lzw_log("error: %s", ex.what()); }
+    }
+
+    ImGui::Text("Decompress:");
+    ImGui::SameLine();
+    if (ImGui::Button("batch##d")) {
+        try { run_lzw_batch_decompress(); }
+        catch (const std::exception& ex) { lzw_log("error: %s", ex.what()); }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("streaming##d")) {
+        try { run_lzw_streaming_decompress(); }
+        catch (const std::exception& ex) { lzw_log("error: %s", ex.what()); }
+    }
+
+    ImGui::Separator();
+    ImGui::Text("LZW log (last 20):");
+    if (!g_lzw_log.is_empty()) {
+        size_t last = g_lzw_log.get_last_index();
+        size_t first = g_lzw_log.get_first_index();
+        size_t shown = std::min<size_t>(20, last - first + 1);
+        for (size_t i = last - shown + 1; i <= last; i++) {
+            ImGui::TextUnformatted(g_lzw_log.get(i).text);
+        }
+    }
+
+    ImGui::End();
+}
+
 // ===========================
 
 void draw_gui() {
     draw_memory_window();
     draw_lazy_window();
+    draw_pipeline_window();
+    draw_lzw_window();
 }
 
 int main() {

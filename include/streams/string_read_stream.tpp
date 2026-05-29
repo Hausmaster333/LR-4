@@ -44,7 +44,6 @@ bool StringReadStream<T>::is_end_of_stream() const {
 template <class T>
 T StringReadStream<T>::read() {
     if (!this->is_open) throw StreamNotOpen();
-    if (is_eof_reached && cursor >= source.size()) throw EndOfStream();
     if (cursor >= source.size()) {
         is_eof_reached = true;
         throw EndOfStream();

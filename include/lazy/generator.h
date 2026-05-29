@@ -20,7 +20,7 @@ class Generator {
 
         virtual Generator<T>* clone() const = 0; // Копия генератора с pos = 0, используется в derive-операциях, строится от всей исходной посл-сти, не от текущей pos
 
-        virtual ~Generator() = default;
+        virtual ~Generator() {};
 };
 
 template <class T>

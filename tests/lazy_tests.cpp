@@ -149,7 +149,6 @@ TEST(LazySequenceTest, ArrayConstructor) {
     LazySequence<int> seq(items, 3);
 
     EXPECT_EQ(seq.get_length(), Ordinal::finite(3));
-    // Крконструктор не материализует элементы сразу и кэш изначально пуст, материализация при get().
     EXPECT_EQ(seq.get_materialized_count(), 0);
 
     seq.get(2);
@@ -332,11 +331,11 @@ TEST(LazySequenceTest, InfiniteFibonacci_Basic) {
     int init[] = {0, 1};
     MutableArraySequence<int> initial(init, 2);
 
-    auto fib_rule = [](Sequence<int>* window) -> int {
+    auto rule = [](Sequence<int>* window) -> int {
         return window->get_first() + window->get_last();
     };
 
-    LazySequence<int> fib(fib_rule, &initial, /*cache_capacity*/ 16);
+    LazySequence<int> fib(rule, &initial, 16);
 
     EXPECT_TRUE(fib.get_length().is_infinite());
     EXPECT_EQ(fib.get(0), 0);
@@ -387,7 +386,7 @@ TEST(LazySequenceTest, InfiniteFibonacci_EvictionAfterLargeIndex) {
         return window->get_first() + window->get_last();
     };
 
-    LazySequence<int> fib(rule, &initial, /*cache_capacity*/ 4);
+    LazySequence<int> fib(rule, &initial, 4);
 
     EXPECT_EQ(fib.get(9), 34);                     // окно [6..9]
     EXPECT_THROW(fib.get(0), std::out_of_range);   // 0 вытеснен
@@ -418,8 +417,8 @@ TEST(LazySequenceTest, AppendOnInfinite_TailHangs) {
 }
 
 TEST(LazySequenceTest, AppendOnInfinite_OrdinallyAccessible) {
-    // Унифицированная модель: append(item) на ω даёт ω+1.
-    // Element доступен через get(Ordinal(1, 0)), а не через "magic take with tail".
+    // append(item) на w даёт w + 1.
+    // доступ через get(Ordinal(1, 0))
     int init[] = {0, 1};
     MutableArraySequence<int> initial(init, 2);
 
@@ -433,22 +432,17 @@ TEST(LazySequenceTest, AppendOnInfinite_OrdinallyAccessible) {
     LazySequence<int>* extended = once->append(1000);
     delete once;
 
-    // Длина теперь честная: ω + 2 (два append-а после ω-блока)
-    Ordinal L = extended->get_length();
-    EXPECT_TRUE(L.is_infinite());
-    EXPECT_EQ(L.get_omega_count(), 1u);
-    EXPECT_EQ(L.get_finite_part(), 2u);
+    Ordinal length = extended->get_length();
+    EXPECT_TRUE(length.is_infinite());
+    EXPECT_EQ(length.get_omega_count(), 1u);
+    EXPECT_EQ(length.get_finite_part(), 2u);
 
-    // Линейно видим только fib (ω-блок)
     EXPECT_EQ(extended->get(0), 0);
     EXPECT_EQ(extended->get(9), 34);
 
-    // Appended элементы доступны через ординальный индекс
     EXPECT_EQ(extended->get(Ordinal(1, 0)), 999);
     EXPECT_EQ(extended->get(Ordinal(1, 1)), 1000);
 
-    // take(5) теперь даёт ТОЛЬКО первые 5 (без auto-append).
-    // Для "first 5 + appended" — собрать вручную через take + concat.
     LazySequence<int>* prefix = extended->take(5);
     EXPECT_EQ(prefix->get_count(), 5);
     EXPECT_EQ(prefix->get(0), 0);
@@ -461,10 +455,10 @@ TEST(LazySequenceTest, AppendOnInfinite_OrdinallyAccessible) {
 TEST(LazySequenceTest, ConcatFiniteWithFinite) {
     int a[] = {1, 2, 3};
     int b[] = {10, 20};
-    LazySequence<int> la(a, 3);
-    LazySequence<int> lb(b, 2);
+    LazySequence<int> seq_a(a, 3);
+    LazySequence<int> seq_b(b, 2);
 
-    LazySequence<int>* result = la.concat(&lb);
+    LazySequence<int>* result = seq_a.concat(&seq_b);
 
     EXPECT_EQ(result->get_length(), Ordinal::finite(5));
     EXPECT_EQ(result->get(0), 1);
@@ -509,7 +503,6 @@ TEST(LazySequenceTest, InsertAtMiddleOfInfinite) {
 
     LazySequence<int> fib(rule, &initial);
 
-    // вставляем 99 на позицию 3: было [0,1,1,2,3,...], станет [0,1,1,99,2,3,...]
     LazySequence<int>* modified = fib.insert_at(99, 3);
     EXPECT_TRUE(modified->get_length().is_infinite());
 
@@ -583,7 +576,6 @@ TEST(LazySequenceTest, WhereOfInfinite_TakeFirstEvens) {
     LazySequence<int>* evens = fib.where([](const int& x) { return x % 2 == 0; });
     EXPECT_TRUE(evens->get_length().is_infinite());
 
-    // Первые чётные числа Фибоначчи: 0, 2, 8, 34, 144, ...
     LazySequence<int>* first3 = evens->take(3);
     EXPECT_EQ(first3->get(0), 0);
     EXPECT_EQ(first3->get(1), 2);
@@ -712,7 +704,7 @@ TEST(LazySequenceTest, EnumeratorOverEmpty_NoElements) {
     EXPECT_FALSE(iter.move_next());
 }
 
-// ================ Проверка ненужных, но обязательных overrides через Sequence
+// ================ Проверка overrides через Sequence
 
 TEST(LazySequenceTest, ThrowOverridesAccessibleViaSequencePointer) {
     int items[] = {1, 2, 3};
