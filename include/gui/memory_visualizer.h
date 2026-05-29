@@ -16,8 +16,9 @@ inline ImU32 color_for_block(int block_id) {
     return IM_COL32(red, green, blue, 255);
 }
 
-// Рендер ленты памяти квадратиками. Фиксированный размер клетки и фикс.
-// Число ячеек в строке — лента не сжимается при росте capacity, окно при необходимости получает горизонтальный скролл от ImGui.
+// Рендер ленты памяти квадратиками. Число ячеек в строке (per_row) подстраивается
+// под текущую ширину окна - при уменьшении окна лента переносит ячейки на новую
+// строку вместо ухода за границу.
 inline void render_memory_tape(const MemoryTape& tape) {
     int cap = tape.get_capacity();
     if (cap <= 0) return;
@@ -28,8 +29,13 @@ inline void render_memory_tape(const MemoryTape& tape) {
     const float cell_w  = 40.0f;
     const float cell_h  = 40.0f;
     const float spacing = 2.0f;
-    const int per_row = 50;
     const bool draw_id = true;
+
+    float available_width = ImGui::GetContentRegionAvail().x;
+    int per_row = static_cast<int>(available_width / (cell_w + spacing));
+
+    if (per_row < 1) per_row = 1;
+    if (per_row > cap) per_row = cap;
 
     for (int i = 0; i < cap; ++i) {
         int row = i / per_row;

@@ -42,6 +42,7 @@ LazySequence<T>::LazySequence(const Sequence<T>* source, int cache_capacity)
 template <class T>
 LazySequence<T>::LazySequence(std::function<T(Sequence<T>*)> rule, const Sequence<T>* initial, int cache_capacity)
     : generator(nullptr), gen_pos(0), length(Ordinal::infinity()), cache(cache_capacity) {
+
     generator = new RecurrenceGenerator<T>(rule, initial);
 }
 
@@ -256,8 +257,13 @@ LazySequence<T>* LazySequence<T>::take(int n) {
     }
 
     MutableArraySequence<T>* buffer = new MutableArraySequence<T>();
-    for (int index = 0; index < n; index++) {
-        buffer->append(get(index));
+    try {
+        for (int index = 0; index < n; index++) {
+            buffer->append(get(index));
+        }
+    } catch (...) {
+        delete buffer;
+        throw;
     }
 
     Generator<T>* new_generator = (n > 0) ? SourceGenerator<T>::own(buffer) : nullptr;

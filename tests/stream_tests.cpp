@@ -5,9 +5,12 @@
 #include "streams/string_read_stream.h"
 #include "streams/file_read_stream.h"
 #include "streams/file_write_stream.h"
+#include "streams/sequence_stream.h"
+#include "streams/string_operations.h"
 #include "lazy/lazy_sequence.h"
 #include "core/sequence.h"
 #include <cstdio>
+#include <string>
 #include <gtest/gtest.h>
 
 TEST(StreamExceptionsTest, TypesDistinct) {
@@ -418,4 +421,288 @@ TEST(FileReadStreamTest, SeekBackToLine0) {
     EXPECT_EQ(r.read(), 2);
     r.close();
     std::remove(path.c_str());
+}
+
+// =================== SequenceStream ===================
+
+TEST(SequenceStreamTest, Of_FromArray) {
+    int items[] = {10, 20, 30};
+    auto* result = SequenceStream<int>::of(items, 3).to_array();
+
+    EXPECT_EQ(result->get_count(), 3);
+    EXPECT_EQ(result->get(0), 10);
+    EXPECT_EQ(result->get(1), 20);
+    EXPECT_EQ(result->get(2), 30);
+    delete result;
+}
+
+TEST(SequenceStreamTest, Of_FromSequence) {
+    int items[] = {1, 2, 3};
+    MutableArraySequence<int> src(items, 3);
+    auto* result = SequenceStream<int>::of(&src).to_array();
+
+    EXPECT_EQ(result->get_count(), 3);
+    EXPECT_EQ(result->get(0), 1);
+    EXPECT_EQ(result->get(2), 3);
+    delete result;
+}
+
+TEST(SequenceStreamTest, Filter) {
+    int items[] = {1, 2, 3, 4, 5};
+    auto* result = SequenceStream<int>::of(items, 5).filter([](const int& x) { return x % 2 == 0; }).to_array();
+
+    EXPECT_EQ(result->get_count(), 2);
+    EXPECT_EQ(result->get(0), 2);
+    EXPECT_EQ(result->get(1), 4);
+    delete result;
+}
+
+TEST(SequenceStreamTest, Map) {
+    int items[] = {1, 2, 3};
+    auto* result = SequenceStream<int>::of(items, 3).map<int>([](const int& x) { return x * 2; }).to_array();
+
+    EXPECT_EQ(result->get_count(), 3);
+    EXPECT_EQ(result->get(0), 2);
+    EXPECT_EQ(result->get(1), 4);
+    EXPECT_EQ(result->get(2), 6);
+    delete result;
+}
+
+TEST(SequenceStreamTest, MapChangeType) {
+    int items[] = {1, 2, 3};
+    auto* result = SequenceStream<int>::of(items, 3).map<std::string>([](const int& x) { return std::to_string(x); }).to_array();
+
+    EXPECT_EQ(result->get_count(), 3);
+    EXPECT_EQ(result->get(0), "1");
+    EXPECT_EQ(result->get(1), "2");
+    EXPECT_EQ(result->get(2), "3");
+    delete result;
+}
+
+TEST(SequenceStreamTest, Sorted_Default) {
+    int items[] = {3, 1, 4, 1, 5};
+    auto* result = SequenceStream<int>::of(items, 5).sorted().to_array();
+
+    EXPECT_EQ(result->get_count(), 5);
+    EXPECT_EQ(result->get(0), 1);
+    EXPECT_EQ(result->get(1), 1);
+    EXPECT_EQ(result->get(2), 3);
+    EXPECT_EQ(result->get(3), 4);
+    EXPECT_EQ(result->get(4), 5);
+    delete result;
+}
+
+TEST(SequenceStreamTest, Sorted_Custom) {
+    int items[] = {3, 1, 4, 1, 5};
+    auto* result = SequenceStream<int>::of(items, 5).sorted([](const int& a, const int& b) { return a > b; }).to_array();
+
+    EXPECT_EQ(result->get_count(), 5);
+    EXPECT_EQ(result->get(0), 5);
+    EXPECT_EQ(result->get(1), 4);
+    EXPECT_EQ(result->get(2), 3);
+    EXPECT_EQ(result->get(3), 1);
+    EXPECT_EQ(result->get(4), 1);
+    delete result;
+}
+
+TEST(SequenceStreamTest, Take) {
+    int items[] = {10, 20, 30, 40, 50};
+    auto* result = SequenceStream<int>::of(items, 5).take(3).to_array();
+
+    EXPECT_EQ(result->get_count(), 3);
+    EXPECT_EQ(result->get(0), 10);
+    EXPECT_EQ(result->get(2), 30);
+    delete result;
+}
+
+TEST(SequenceStreamTest, Skip) {
+    int items[] = {10, 20, 30, 40, 50};
+    auto* result = SequenceStream<int>::of(items, 5).skip(2).to_array();
+
+    EXPECT_EQ(result->get_count(), 3);
+    EXPECT_EQ(result->get(0), 30);
+    EXPECT_EQ(result->get(1), 40);
+    EXPECT_EQ(result->get(2), 50);
+    delete result;
+}
+
+TEST(SequenceStreamTest, Reduce) {
+    int items[] = {1, 2, 3, 4, 5};
+    int sum = SequenceStream<int>::of(items, 5).reduce([](const int& acc, const int& x) { return acc + x; }, 0);
+
+    EXPECT_EQ(sum, 15);
+}
+
+TEST(SequenceStreamTest, ForEach) {
+    int items[] = {10, 20, 30};
+    int total = 0;
+    SequenceStream<int>::of(items, 3).for_each([&total](const int& x) { total += x; });
+
+    EXPECT_EQ(total, 60);
+}
+
+TEST(SequenceStreamTest, Count) {
+    int items[] = {1, 2, 3, 4, 5};
+    int count = SequenceStream<int>::of(items, 5).filter([](const int& x) { return x > 2; }).count();
+
+    EXPECT_EQ(count, 3);
+}
+
+TEST(SequenceStreamTest, FullPipeline) {
+    int items[] = {5, 3, 8, 1, 9, 2, 7};
+    auto* result = SequenceStream<int>::of(items, 7).filter([](const int& x) { return x > 3; }).sorted().take(3).to_array();
+
+    EXPECT_EQ(result->get_count(), 3);
+    EXPECT_EQ(result->get(0), 5);
+    EXPECT_EQ(result->get(1), 7);
+    EXPECT_EQ(result->get(2), 8);
+    delete result;
+}
+
+TEST(SequenceStreamTest, EmptyStream) {
+    auto* result = SequenceStream<int>::of(nullptr, 0).to_array();
+    EXPECT_EQ(result->get_count(), 0);
+    delete result;
+}
+
+TEST(SequenceStreamTest, ConsumedStreamThrows) {
+    int items[] = {1, 2, 3};
+    auto stream = SequenceStream<int>::of(items, 3);
+    auto* first = stream.to_array();
+    EXPECT_THROW(stream.to_array(), std::logic_error);
+    delete first;
+}
+
+// =================== String Operations
+
+TEST(StringOpsTest, ToUpper) {
+    std::string items[] = {"hello", "World"};
+    auto* result = SequenceStream<std::string>::of(items, 2).map<std::string>(str_ops::to_upper()).to_array();
+
+    EXPECT_EQ(result->get(0), "HELLO");
+    EXPECT_EQ(result->get(1), "WORLD");
+    delete result;
+}
+
+TEST(StringOpsTest, ToLower) {
+    std::string items[] = {"HELLO", "World"};
+    auto* result = SequenceStream<std::string>::of(items, 2).map<std::string>(str_ops::to_lower()).to_array();
+
+    EXPECT_EQ(result->get(0), "hello");
+    EXPECT_EQ(result->get(1), "world");
+    delete result;
+}
+
+TEST(StringOpsTest, Trim) {
+    std::string items[] = {"  hi  ", "no_spaces", " left", "right "};
+    auto* result = SequenceStream<std::string>::of(items, 4).map<std::string>(str_ops::trim()).to_array();
+
+    EXPECT_EQ(result->get(0), "hi");
+    EXPECT_EQ(result->get(1), "no_spaces");
+    EXPECT_EQ(result->get(2), "left");
+    EXPECT_EQ(result->get(3), "right");
+    delete result;
+}
+
+TEST(StringOpsTest, Substr) {
+    std::string items[] = {"abcdef", "xyz"};
+    auto* result = SequenceStream<std::string>::of(items, 2).map<std::string>(str_ops::substr(2, 3)).to_array();
+
+    EXPECT_EQ(result->get(0), "cde");
+    EXPECT_EQ(result->get(1), "z");
+    delete result;
+}
+
+TEST(StringOpsTest, ReplaceAll) {
+    std::string items[] = {"aXbXc", "noX"};
+    auto* result = SequenceStream<std::string>::of(items, 2).map<std::string>(str_ops::replace_all("X", "-")).to_array();
+
+    EXPECT_EQ(result->get(0), "a-b-c");
+    EXPECT_EQ(result->get(1), "no-");
+    delete result;
+}
+
+TEST(StringOpsTest, PrependAppend) {
+    std::string items[] = {"world"};
+    auto* result = SequenceStream<std::string>::of(items, 1).map<std::string>(str_ops::prepend("hello ")).map<std::string>(str_ops::append("!")).to_array();
+
+    EXPECT_EQ(result->get(0), "hello world!");
+    delete result;
+}
+
+TEST(StringOpsTest, StartsWith) {
+    std::string items[] = {"apple", "banana", "avocado", "cherry"};
+    auto* result = SequenceStream<std::string>::of(items, 4).filter(str_ops::starts_with("a")).to_array();
+
+    EXPECT_EQ(result->get_count(), 2);
+    EXPECT_EQ(result->get(0), "apple");
+    EXPECT_EQ(result->get(1), "avocado");
+    delete result;
+}
+
+TEST(StringOpsTest, EndsWith) {
+    std::string items[] = {"test.cpp", "main.h", "data.cpp", "readme.md"};
+    auto* result = SequenceStream<std::string>::of(items, 4).filter(str_ops::ends_with(".cpp")).to_array();
+
+    EXPECT_EQ(result->get_count(), 2);
+    EXPECT_EQ(result->get(0), "test.cpp");
+    EXPECT_EQ(result->get(1), "data.cpp");
+    delete result;
+}
+
+TEST(StringOpsTest, Contains) {
+    std::string items[] = {"hello world", "foo", "world cup", "bar"};
+    auto* result = SequenceStream<std::string>::of(items, 4).filter(str_ops::contains("world")).to_array();
+
+    EXPECT_EQ(result->get_count(), 2);
+    EXPECT_EQ(result->get(0), "hello world");
+    EXPECT_EQ(result->get(1), "world cup");
+    delete result;
+}
+
+TEST(StringOpsTest, MinLength) {
+    std::string items[] = {"a", "bb", "ccc", "dddd"};
+    auto* result = SequenceStream<std::string>::of(items, 4).filter(str_ops::min_length(3)).to_array();
+
+    EXPECT_EQ(result->get_count(), 2);
+    EXPECT_EQ(result->get(0), "ccc");
+    EXPECT_EQ(result->get(1), "dddd");
+    delete result;
+}
+
+TEST(StringOpsTest, IsNotEmpty) {
+    std::string items[] = {"hello", "", "world", ""};
+    auto* result = SequenceStream<std::string>::of(items, 4).filter(str_ops::is_not_empty()).to_array();
+
+    EXPECT_EQ(result->get_count(), 2);
+    EXPECT_EQ(result->get(0), "hello");
+    EXPECT_EQ(result->get(1), "world");
+    delete result;
+}
+
+TEST(StringOpsTest, Join) {
+    std::string items[] = {"a", "b", "c"};
+    auto* arr = SequenceStream<std::string>::of(items, 3).to_array();
+    std::string joined = str_ops::join(arr, ", ");
+
+    EXPECT_EQ(joined, "a, b, c");
+    delete arr;
+}
+
+TEST(StringOpsTest, FullPipeline) {
+    std::string items[] = {"  Apple  ", "  banana  ", "Avocado", "cherry", "  apricot  "};
+    auto* result = SequenceStream<std::string>::of(items, 5)
+        .map<std::string>(str_ops::trim())
+        .filter(str_ops::starts_with("A"))
+        .map<std::string>(str_ops::to_upper())
+        .sorted()
+        .to_array();
+
+    EXPECT_EQ(result->get_count(), 2);
+    EXPECT_EQ(result->get(0), "APPLE");
+    EXPECT_EQ(result->get(1), "AVOCADO");
+
+    std::string joined = str_ops::join(result, " | ");
+    EXPECT_EQ(joined, "APPLE | AVOCADO");
+    delete result;
 }

@@ -52,5 +52,8 @@ ordinal_tests: tests/ordinal_tests.cpp $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR
 memory_tape_tests: tests/memory_tape_tests.cpp $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc
 	$(CC) $(CFLAGS) $(GTEST_FLAGS) tests/memory_tape_tests.cpp $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc -o memory_tape_tests
 
+lzw_tests: tests/lzw_tests.cpp $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc
+	$(CC) $(CFLAGS) $(GTEST_FLAGS) tests/lzw_tests.cpp $(GTEST_DIR)/src/gtest-all.cc $(GTEST_DIR)/src/gtest_main.cc -o lzw_tests
+
 clean:
 	rm *.o program seq_tests stream_tests memory_tape_tests

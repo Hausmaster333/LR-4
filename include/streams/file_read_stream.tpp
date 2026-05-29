@@ -5,13 +5,10 @@
 #include <stdexcept>
 
 template <class T>
-FileReadStream<T>::FileReadStream(std::string path,
-                                  std::function<T(const std::string&)> deserializer)
-    : ReadOnlyStream<T>(),
-      path(std::move(path)),
-      deserializer(deserializer),
-      is_eof_reached(false) {
-    if (!this->deserializer) throw std::invalid_argument("FileReadStream: deserializer is empty");
+FileReadStream<T>::FileReadStream(std::string path, std::function<T(const std::string&)> deserializer)
+    : ReadOnlyStream<T>(), path(std::move(path)), deserializer(deserializer), is_eof_reached(false) {
+
+    if (!this->deserializer) throw std::invalid_argument("Deserializer is empty");
 }
 
 template <class T>
@@ -23,8 +20,7 @@ template <class T>
 bool FileReadStream<T>::is_end_of_stream() const {
     if (!this->is_open) return false;
     if (is_eof_reached) return true;
-    // peek без потребления: вернёт EOF, если данных больше нет
-    // peek может выставить eofbit в потоке - это допустимо (mutable stream)
+
     return stream.peek() == std::char_traits<char>::eof();
 }
 
@@ -33,18 +29,13 @@ T FileReadStream<T>::read() {
     if (!this->is_open) throw StreamNotOpen();
     if (is_eof_reached) throw EndOfStream();
 
-    line_offsets.append(stream.tellg());
+    std::streampos line_start = stream.tellg();
     std::string line;
     if (!std::getline(stream, line)) {
         is_eof_reached = true;
-        // Откатываем последнюю запись offset-а - мы не прочитали строку
-        MutableArraySequence<std::streampos> truncated;
-        for (int index = 0; index < line_offsets.get_count() - 1; index++) {
-            truncated.append(line_offsets.get(index));
-        }
-        line_offsets = truncated;
         throw EndOfStream();
     }
+    line_offsets.append(line_start);
     this->position++;
 
     return deserializer(line);
@@ -62,7 +53,7 @@ size_t FileReadStream<T>::seek(size_t index) {
             stream.clear();
             stream.close();
             stream.open(path, std::ios::in);
-            if (!stream) throw StreamWriteError("FileReadStream: cannot reopen " + path);
+            if (!stream) throw StreamWriteError("Cannot reopen " + path);
 
             // Усекаем line_offsets до index записей
             MutableArraySequence<std::streampos> truncated;
@@ -112,7 +103,7 @@ void FileReadStream<T>::open() {
     if (this->is_open) return;
 
     stream.open(path, std::ios::in);
-    if (!stream) throw StreamWriteError("FileReadStream: cannot open " + path);
+    if (!stream) throw StreamWriteError("Cannot open " + path);
     this->is_open = true;
     this->position = 0;
     is_eof_reached = false;
