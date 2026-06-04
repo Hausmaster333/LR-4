@@ -25,7 +25,7 @@ class SegmentedDeque: public Sequence<T> {
         int back_index; // Позиция за последним элементом
         int count;
         static const int segment_size = 8; // static - одно значение на класс, а не на объект. const - нельзя изменить
-        
+
         T* allocate_block();
         void grow_map_front();
         void grow_map_back();
@@ -33,7 +33,7 @@ class SegmentedDeque: public Sequence<T> {
         void shrink_map();
 
         void resolve_index(int index, int* block, int* offset) const; // Из index получает пару block + offset(смещение внутри block)
-        
+
         void sys_append(const T& item) override;
 
         virtual SegmentedDeque<T>* Instance() = 0;
