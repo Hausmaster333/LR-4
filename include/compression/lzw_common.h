@@ -12,7 +12,7 @@ static const int LZW_INIT_BITS = 9;                    // Начальная ш�
 static const int LZW_MAX_BITS = 16;                    // Максимальная ширина кода
 static const int LZW_CLEAR = 256;
 static const int LZW_FIRST = 257;                      // Первый код данных (256 занят под CLEAR)
-static const long LZW_MAXMAXCODE = 1L << LZW_MAX_BITS; // словарь до 2^16 кодов
+static const long LZW_LIMITCODE = 1L << LZW_MAX_BITS; // словарь до 2^16 кодов
 
 inline long lzw_maxcode(int n_bits) { return (1L << n_bits) - 1; } // макс. код для ширины n_bits бит
 

@@ -14,7 +14,7 @@ class LzwInputStream : public ReadOnlyStream<uint8_t> {
         ReadOnlyStream<uint8_t>* backing;
         int maxbits;
         bool block_mode;
-        long maxmaxcode;
+        long limitcode;
 
         uint16_t* tab_prefix; // Код записи словаря
         uint8_t* tab_suffix;  // Последний байт записи словаря
@@ -38,7 +38,7 @@ class LzwInputStream : public ReadOnlyStream<uint8_t> {
             if (clear_flg || offset >= size || free_ent > maxcode) {
                 if (free_ent > maxcode) {
                     n_bits++;
-                    maxcode = (n_bits == maxbits) ? maxmaxcode : lzw_maxcode(n_bits);
+                    maxcode = (n_bits == maxbits) ? limitcode : lzw_maxcode(n_bits);
                 }
 
                 if (clear_flg) {
@@ -104,7 +104,7 @@ class LzwInputStream : public ReadOnlyStream<uint8_t> {
             finchar = static_cast<uint8_t>(code);
             stack[stack_top++] = finchar;
 
-            if (free_ent < maxmaxcode) {
+            if (free_ent < limitcode) {
                 tab_prefix[free_ent] = static_cast<uint16_t>(oldcode);
                 tab_suffix[free_ent] = finchar;
                 free_ent++;
@@ -113,7 +113,7 @@ class LzwInputStream : public ReadOnlyStream<uint8_t> {
             return true;
         }
     public:
-        LzwInputStream(ReadOnlyStream<uint8_t>* backing) : backing(backing), maxbits(LZW_MAX_BITS), block_mode(true), maxmaxcode(LZW_MAXMAXCODE),
+        LzwInputStream(ReadOnlyStream<uint8_t>* backing) : backing(backing), maxbits(LZW_MAX_BITS), block_mode(true), limitcode(LZW_LIMITCODE),
               tab_prefix(nullptr), tab_suffix(nullptr), stack(nullptr), stack_top(0), n_bits(LZW_INIT_BITS), maxcode(lzw_maxcode(LZW_INIT_BITS)), 
               free_ent(LZW_FIRST), oldcode(-1), finchar(0), clear_flg(0), first_done(false), offset(0), size(0) {
             if (backing == nullptr) throw std::invalid_argument("LzwInputStream: backing is nullptr");
@@ -132,11 +132,11 @@ class LzwInputStream : public ReadOnlyStream<uint8_t> {
 
             maxbits = flags & 0x1F;
             block_mode = (flags & LZW_BLOCK_MODE) != 0;
-            maxmaxcode = 1L << maxbits;
+            limitcode = 1L << maxbits;
 
-            tab_prefix = new uint16_t[maxmaxcode];
-            tab_suffix = new uint8_t[maxmaxcode];
-            stack = new uint8_t[maxmaxcode + 1];
+            tab_prefix = new uint16_t[limitcode];
+            tab_suffix = new uint8_t[limitcode];
+            stack = new uint8_t[limitcode + 1];
             for (int code = 0; code < 256; code++) {
                 tab_prefix[code] = 0;
                 tab_suffix[code] = static_cast<uint8_t>(code);

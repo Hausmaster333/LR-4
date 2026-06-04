@@ -54,7 +54,7 @@ class LzwOutputStream : public WriteOnlyStream<uint8_t> {
                     clear_flg = 0;
                 } else {
                     n_bits++;
-                    maxcode = (n_bits == LZW_MAX_BITS) ? LZW_MAXMAXCODE : lzw_maxcode(n_bits);
+                    maxcode = (n_bits == LZW_MAX_BITS) ? LZW_LIMITCODE : lzw_maxcode(n_bits);
                 }
             }
         }
@@ -97,7 +97,7 @@ class LzwOutputStream : public WriteOnlyStream<uint8_t> {
                     ent = child; // Идем дальше, если можно расширить
                 } else {
                     output_code(ent);
-                    if (dictionary->get_next_code() < LZW_MAXMAXCODE) {
+                    if (dictionary->get_next_code() < LZW_LIMITCODE) {
                         dictionary->add_child(static_cast<uint16_t>(ent), value);
                     } else {
                         // Сбрасываем полный словарь

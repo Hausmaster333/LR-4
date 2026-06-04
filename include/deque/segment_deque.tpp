@@ -534,4 +534,3 @@ SegmentedDeque<T>::~SegmentedDeque() {
         delete[] block_map.get(index);
     }
 }
-
