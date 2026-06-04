@@ -18,7 +18,10 @@ namespace {
         SequenceWriteStream<uint8_t> backing(&out);
         LzwOutputStream compressor(&backing);
         compressor.open();
-        for (int index = 0; index < count; index++) compressor.write(data[index]);
+        for (int index = 0; index < count; index++) {
+            compressor.write(data[index]);
+        }
+
         compressor.close();
     }
 
@@ -27,12 +30,15 @@ namespace {
         SequenceReadStream<uint8_t> backing(&z);
         LzwInputStream decompressor(&backing);
         decompressor.open();
-        while (!decompressor.is_end_of_stream()) out.append(decompressor.read());
+        while (!decompressor.is_end_of_stream()) {
+            out.append(decompressor.read());
+        }
+
         decompressor.close();
     }
 
     // Полный цикл
-    void check_roundtrip(const uint8_t* data, int count) {
+    void check_cycle(const uint8_t* data, int count) {
         MutableArraySequence<uint8_t> compressed;
         compress_mem(data, count, compressed);
 
@@ -48,30 +54,36 @@ namespace {
     void write_bytes_file(const std::string& path, const uint8_t* data, int count) {
         BinaryFileWriteStream<uint8_t> writer(path);
         writer.open();
-        for (int index = 0; index < count; index++) writer.write(data[index]);
+        for (int index = 0; index < count; index++) {
+            writer.write(data[index]);
+        }
+
         writer.close();
     }
 
     void read_bytes_file(const std::string& path, MutableArraySequence<uint8_t>& out) {
         BinaryFileReadStream<uint8_t> reader(path);
         reader.open();
-        while (!reader.is_end_of_stream()) out.append(reader.read());
+        while (!reader.is_end_of_stream()) {
+            out.append(reader.read());
+        }
+
         reader.close();
     }
 }
 
 TEST(LzwTest, RoundTripEmpty) {
-    check_roundtrip(nullptr, 0);
+    check_cycle(nullptr, 0);
 }
 
 TEST(LzwTest, RoundTripSingleByte) {
     uint8_t data[] = {0x41};
-    check_roundtrip(data, 1);
+    check_cycle(data, 1);
 }
 
 TEST(LzwTest, RoundTripSmall) {
     const char* text = "TOBEORNOTTOBEORTOBEORNOT";
-    check_roundtrip(reinterpret_cast<const uint8_t*>(text), static_cast<int>(std::strlen(text)));
+    check_cycle(reinterpret_cast<const uint8_t*>(text), static_cast<int>(std::strlen(text)));
 }
 
 TEST(LzwTest, RoundTripRepetitive) {
@@ -83,7 +95,7 @@ TEST(LzwTest, RoundTripRepetitive) {
         raw[index] = data.get(index);
     }
 
-    check_roundtrip(raw, data.get_count());
+    check_cycle(raw, data.get_count());
 
     delete[] raw;
 }
@@ -96,14 +108,18 @@ TEST(LzwTest, RoundTripLargeRandom) {
         state ^= state << 13; state ^= state >> 17; state ^= state << 5;
         raw[index] = static_cast<uint8_t>(state & 0xFF);
     }
-    check_roundtrip(raw, count);
+
+    check_cycle(raw, count);
     delete[] raw;
 }
 
 TEST(LzwTest, RoundTripAllBytes) {
     uint8_t data[256];
-    for (int index = 0; index < 256; index++) data[index] = static_cast<uint8_t>(index);
-    check_roundtrip(data, 256);
+    for (int index = 0; index < 256; index++) {
+        data[index] = static_cast<uint8_t>(index);
+    }
+
+    check_cycle(data, 256);
 }
 
 TEST(LzwTest, HeaderBytes) {

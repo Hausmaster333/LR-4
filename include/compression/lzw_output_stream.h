@@ -24,7 +24,6 @@ class LzwOutputStream : public WriteOnlyStream<uint8_t> {
             for (int byte_index = 0; byte_index < byte_count; byte_index++) {
                 backing->write(buf[byte_index]);
             }
-
             offset = 0;
 
             std::memset(buf, 0, sizeof(buf));
