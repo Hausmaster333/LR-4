@@ -18,7 +18,7 @@ class ReadOnlyStream {
 
         virtual bool is_can_seek() const = 0; // Поддерживает ли поток переход вперёд по индексу
         virtual bool is_can_go_back() const = 0; // Поддерживает ли поток переход назад по индексу
-        virtual size_t seek(size_t index) = 0; // Переход на index. Возвращает фактическую позицию (может отличаться от запрошенной если стрим короче)
+        virtual size_t seek(size_t index) = 0; // Переход на index. Возвращает фактическую позицию
 
         virtual void open() = 0; // Открыть поток
         virtual void close() = 0; // Закрыть поток

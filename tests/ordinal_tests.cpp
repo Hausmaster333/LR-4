@@ -24,7 +24,7 @@ LazySequence<int>* make_fin(const int* items, int count) {
     return new LazySequence<int>(items, count);
 }
 
-// ======== Пограничные позиции вставки
+// ======== Граничные случаи
 
 TEST(InsertExtra, InsertAtEnd_Finite) {
     // Эквивалентно конкатенации
@@ -92,7 +92,37 @@ TEST(InsertExtra, EmptyOther_IsIdentity) {
     delete ins;
 }
 
-// ======== Точные значения длин в орнидальной арифметике
+TEST(InsertExtra, FiniteIntoFinite_NoOmegaAccess) {
+    int base_data[] = {1, 2, 3};
+    int ins_data[] = {99};
+    LazySequence<int>* base = make_fin(base_data, 3);
+    LazySequence<int>* ins = make_fin(ins_data, 1);
+    LazySequence<int>* res = base->insert_at(ins, 1);
+
+    // omega_part = 1 на полностью финитной последовательности - выход за границы
+    EXPECT_THROW(res->get(Ordinal(1, 0)), std::out_of_range);
+
+    delete res;
+    delete base;
+    delete ins;
+}
+
+TEST(InsertExtra, OrdinalZeroEquivalentToInt) {
+    LazySequence<int>* base = make_inf(0);
+    LazySequence<int>* ins = make_inf(1000);
+    LazySequence<int>* res = base->insert_at(ins, 5);
+
+    // {0, k} должен быть идентичен get(k)
+    for (int k = 0; k < 30; k++) {
+        EXPECT_EQ(res->get(Ordinal(0, k)), res->get(k)) << "k=" << k;
+    }
+
+    delete res;
+    delete base;
+    delete ins;
+}
+
+// ======== Ординальная арифметика
 
 TEST(InsertExtra, Length_FiniteIntoInfinite) {
     LazySequence<int>* base = make_inf(0);
@@ -267,21 +297,19 @@ TEST(InsertExtra, FibAsInsertedSequence) {
 // ======== 
 
 TEST(InsertExtra, NoCrossContamination_InfIntoInf) {
-    // Убеждаемся, что элементы из base никогда не попадают в зону вставки и наоборот
-    LazySequence<int>* base = make_inf(0);     // 0, 1, 2, 3, ... (даёт только малые числа на малых индексах)
-    LazySequence<int>* ins = make_inf(1000);   // 1000, 1001, ...
+    LazySequence<int>* base = make_inf(0);
+    LazySequence<int>* ins = make_inf(1000);
     LazySequence<int>* res = base->insert_at(ins, 7);
 
-    // Зона вставки: индексы 7-N - всё должно быть >= 1000
     for (int i = 7; i < 100; i++) {
         EXPECT_GE(res->get(i), 1000) << "index=" << i;
         EXPECT_LE(res->get(i), 1100) << "index=" << i;
     }
-    // Зона слева: индексы 0-6 - всё < 7
+
     for (int i = 0; i < 7; i++) {
         EXPECT_LT(res->get(i), 7) << "index=" << i;
     }
-    // Зона справа (w + k): все >= 7 и < 1000
+
     for (size_t k = 0; k < 20; k++) {
         int v = res->get(Ordinal(1, k));
         EXPECT_GE(v, 7) << "omega_part=1, k=" << k;
@@ -293,37 +321,7 @@ TEST(InsertExtra, NoCrossContamination_InfIntoInf) {
     delete ins;
 }
 
-// ======== Граничные случаи ординального индекса
 
-TEST(InsertExtra, FiniteIntoFinite_NoOmegaAccess) {
-    int base_data[] = {1, 2, 3};
-    int ins_data[] = {99};
-    LazySequence<int>* base = make_fin(base_data, 3);
-    LazySequence<int>* ins = make_fin(ins_data, 1);
-    LazySequence<int>* res = base->insert_at(ins, 1);
-
-    // omega_part = 1 на полностью финитной последовательности - выход за границы
-    EXPECT_THROW(res->get(Ordinal(1, 0)), std::out_of_range);
-
-    delete res;
-    delete base;
-    delete ins;
-}
-
-TEST(InsertExtra, OrdinalZeroEquivalentToInt) {
-    LazySequence<int>* base = make_inf(0);
-    LazySequence<int>* ins = make_inf(1000);
-    LazySequence<int>* res = base->insert_at(ins, 5);
-
-    // {0, k} должен быть идентичен get(k)
-    for (int k = 0; k < 30; k++) {
-        EXPECT_EQ(res->get(Ordinal(0, k)), res->get(k)) << "k=" << k;
-    }
-
-    delete res;
-    delete base;
-    delete ins;
-}
 
 // ======== insert_at(item, idx)
 
@@ -913,7 +911,6 @@ TEST(OrdinalInsert, PastLengthThrows) {
     LazySequence<int>* b = make_inf(100);
     LazySequence<int>* chain = a->concat(b);
 
-    // Длина w * 2, позиция w * 3 > длины
     EXPECT_THROW(chain->insert_at(999, Ordinal(3, 0)), std::out_of_range);
 
     delete chain;
@@ -922,7 +919,6 @@ TEST(OrdinalInsert, PastLengthThrows) {
 }
 
 TEST(OrdinalInsert, AtEndEqualsAppend) {
-    // Вставка на позицию == length эквивалентна append
     LazySequence<int>* a = make_inf(0);
     LazySequence<int>* res = a->insert_at(999, Ordinal::infinity());
 

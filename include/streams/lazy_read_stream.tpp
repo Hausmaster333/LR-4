@@ -5,9 +5,8 @@
 #include <stdexcept>
 
 template <class T>
-LazyReadStream<T>::LazyReadStream(LazySequence<T>* source)
-    : ReadOnlyStream<T>(), source(source) {
-    if (source == nullptr) throw std::invalid_argument("LazyReadStream: source is nullptr");
+LazyReadStream<T>::LazyReadStream(LazySequence<T>* source) : ReadOnlyStream<T>(), source(source) {
+    if (source == nullptr) throw std::invalid_argument("Source is nullptr");
 }
 
 template <class T>
@@ -38,6 +37,7 @@ size_t LazyReadStream<T>::seek(size_t index) {
     if (length.is_finite() && index > length.get_value()) {
         index = length.get_value();
     }
+
     this->position = index;
 
     return this->position;

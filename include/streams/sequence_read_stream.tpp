@@ -5,9 +5,8 @@
 #include <stdexcept>
 
 template <class T>
-SequenceReadStream<T>::SequenceReadStream(const Sequence<T>* source)
-    : ReadOnlyStream<T>(), source(source), iterator(nullptr), total(0) {
-    if (source == nullptr) throw std::invalid_argument("SequenceReadStream: source is nullptr");
+SequenceReadStream<T>::SequenceReadStream(const Sequence<T>* source) : ReadOnlyStream<T>(), source(source), iterator(nullptr), total(0) {
+    if (source == nullptr) throw std::invalid_argument("Source is nullptr");
 
     total = static_cast<size_t>(source->get_count());
 }
@@ -38,13 +37,14 @@ template <class T>
 size_t SequenceReadStream<T>::seek(size_t index) {
     if (!this->is_open) throw StreamNotOpen();
 
-    // Пересоздаём enumerator с нуля и крутим до min(index, total)
     delete iterator;
     iterator = source->get_enumerator();
     size_t target = (index > total) ? total : index;
+
     for (size_t step = 0; step < target; step++) {
         iterator->move_next();
     }
+
     this->position = target;
 
     return target;

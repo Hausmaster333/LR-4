@@ -5,22 +5,20 @@
 #include "lazy/lazy_sequence.h"
 
 template <class T>
-class LazyReadStream : public ReadOnlyStream<T> { // Поток для чтения над LazySequence, источником не владеем
+class LazyReadStream : public ReadOnlyStream<T> {
     private:
-        LazySequence<T>* source; // Не владеем
+        LazySequence<T>* source;
     public:
-        // Создаёт стрим над source. source != nullptr иначе throw
-        // Стрим в закрытом состоянии, нужно вызвать open
         LazyReadStream(LazySequence<T>* source);
 
-        bool is_end_of_stream() const override; // True если source финитный и position достиг его длины, на бесконечной LazySequence всегда возвращает false
+        bool is_end_of_stream() const override;
 
-        T read() override; // Вызывает source->get(position), продвигает position
+        T read() override;
 
-        bool is_can_seek() const override { return true; } // Вперед можем
-        bool is_can_go_back() const override { return false; } // Назад нет, кэш не позволяет
+        bool is_can_seek() const override { return true; }
+        bool is_can_go_back() const override { return false; }
 
-        size_t seek(size_t index) override; // Прыжок только вперёд, position перепрыгивает на index, материализация при следующем read и жля финитной source ограничивает index до длины
+        size_t seek(size_t index) override;
 
         void open() override;
         void close() override;

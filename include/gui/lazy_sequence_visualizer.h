@@ -66,12 +66,21 @@ inline void render_lazy_sequence(const LazySequence<int>& sequence) {
 
     ImGui::TextDisabled("Cache window: [%zu .. %zu]  (showing %zu)", first_index, last_index, shown);
 
+    // Число ячеек в строке подстраивается под ширину окна (как в визуализации памяти):
+    // при уменьшении окна ячейки переносятся на новую строку, а не уходят за границу.
+    float available_width = ImGui::GetContentRegionAvail().x;
+    int per_row = static_cast<int>(available_width / (cell_width + spacing));
+    if (per_row < 1) per_row = 1;
+    if (per_row > static_cast<int>(shown)) per_row = static_cast<int>(shown);
+
     ImVec2 origin = ImGui::GetCursorScreenPos();
 
     for (size_t offset = 0; offset < shown; offset++) {
         size_t logical_index = start_index + offset;
+        int row = static_cast<int>(offset) / per_row;
+        int col = static_cast<int>(offset) % per_row;
 
-        ImVec2 top_left(origin.x + offset * (cell_width + spacing), origin.y);
+        ImVec2 top_left(origin.x + col * (cell_width + spacing), origin.y + row * (cell_height + spacing));
         char text_buffer[16];
         snprintf(text_buffer, sizeof(text_buffer), "%d", sequence.get_cache_at(logical_index));
         int alpha = 255 - std::min<int>(180, static_cast<int>(offset) * 4);
@@ -80,7 +89,8 @@ inline void render_lazy_sequence(const LazySequence<int>& sequence) {
         draw_lazy_cell(draw, top_left, cell_width, cell_height, fill_color, text_buffer);
     }
 
-    ImGui::Dummy(ImVec2(shown * (cell_width + spacing), cell_height));
+    int rows = (static_cast<int>(shown) + per_row - 1) / per_row;
+    ImGui::Dummy(ImVec2(per_row * (cell_width + spacing), rows * (cell_height + spacing)));
 
     ImGui::TextDisabled("  idx %zu ... idx %zu", start_index, start_index + shown - 1);
 }
