@@ -13,7 +13,7 @@ struct StreamStage {
     virtual ~StreamStage() {}
 };
 
-// Источник из Sequence, тянет элементы лениво через итератор
+// Источник из Sequence, тянет элементы через итератор
 template <class T>
 class SequenceSourceStage : public StreamStage<T> {
     private:
@@ -28,7 +28,7 @@ class SequenceSourceStage : public StreamStage<T> {
         }
 };
 
-// Копирует данные в собственную последовательность.
+// Копирует данные в последовательность
 template <class T>
 class ArraySourceStage : public StreamStage<T> {
     private:
@@ -163,7 +163,6 @@ class SortStage : public StreamStage<T> {
                 order[index] = index;
             }
 
-            // order[k] - индекс в буфере элемента, который встанет на k позицию
             for (int boundary = 1; boundary < count; boundary++) {
                 int to_insert = order[boundary];
                 int slot = boundary - 1;
