@@ -5,11 +5,8 @@
 #include <stdexcept>
 
 template <class T>
-SequenceWriteStream<T>::SequenceWriteStream(Sequence<T>* destination)
-    : WriteOnlyStream<T>(), destination(destination) {
-    if (destination == nullptr) {
-        throw std::invalid_argument("SequenceWriteStream: destination is nullptr");
-    }
+SequenceWriteStream<T>::SequenceWriteStream(Sequence<T>* destination) : WriteOnlyStream<T>(), destination(destination) {
+    if (destination == nullptr) throw std::invalid_argument("Destination is nullptr");
 }
 
 template <class T>

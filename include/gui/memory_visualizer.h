@@ -5,20 +5,17 @@
 #include "memory/memory_tape.h"
 #include <cstdint>
 
-// Хеш-генератор цвета для block_id. Для -1 (свободно) — темно-серый.
 inline ImU32 color_for_block(int block_id) {
     if (block_id < 0) return IM_COL32(50, 55, 65, 255);
     
     uint32_t hash = static_cast<uint32_t>(block_id) * 2654435761u;
-    int red   = 80 + static_cast<int>((hash)        & 0x7F);
-    int green = 80 + static_cast<int>((hash >> 7)   & 0x7F);
-    int blue  = 80 + static_cast<int>((hash >> 14)  & 0x7F);
+    int red = 80 + static_cast<int>((hash) & 0x7F);
+    int green = 80 + static_cast<int>((hash >> 7) & 0x7F);
+    int blue = 80 + static_cast<int>((hash >> 14) & 0x7F);
+
     return IM_COL32(red, green, blue, 255);
 }
 
-// Рендер ленты памяти квадратиками. Число ячеек в строке (per_row) подстраивается
-// под текущую ширину окна - при уменьшении окна лента переносит ячейки на новую
-// строку вместо ухода за границу.
 inline void render_memory_tape(const MemoryTape& tape) {
     int cap = tape.get_capacity();
     if (cap <= 0) return;

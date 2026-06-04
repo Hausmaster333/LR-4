@@ -7,13 +7,11 @@
 template <class T>
 class SequenceWriteStream : public WriteOnlyStream<T> {
     private:
-        Sequence<T>* destination; // Не владеем
+        Sequence<T>* destination;
     public:
-        // Создаёт стрим над destination. destination != nullptr иначе throw
-        // Стрим в закрытом состоянии, нужно вызвать open
         SequenceWriteStream(Sequence<T>* destination);
 
-        size_t write(const T& value) override; // Делает destination->append(value), возвращает обновлённую position
+        size_t write(const T& value) override;
 
         void open() override;
         void close() override;

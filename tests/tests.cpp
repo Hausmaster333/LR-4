@@ -1,7 +1,9 @@
 #include "utils.h"
 #include "core/sequence.h"
+#include "core/option.h"
 #include "types/bit_sequence.h"
 #include <gtest/gtest.h>
+#include <utility>
 
 template <class T>
 void check_sequence(const Sequence<T>* seq, const T* expected, int expected_count) {
@@ -698,6 +700,49 @@ TEST(OptionTest, None) {
     Option<int> opt = Option<int>::None();
     EXPECT_FALSE(opt.has_value());
     EXPECT_THROW(opt.get_value(), std::runtime_error);
+}
+
+namespace {
+    // Тип без конструктора по умолчанию
+    struct Tracked {
+        static int live;
+        int x;
+        Tracked(int v) : x(v) { live++; }
+        Tracked(const Tracked& o) : x(o.x) { live++; }
+        Tracked(Tracked&& o) noexcept : x(o.x) { live++; }
+        ~Tracked() { live--; }
+    };
+    int Tracked::live = 0;
+}
+
+TEST(OptionTest, NonDefaultConstructible) {
+    Option<Tracked> some = Option<Tracked>::Some(Tracked(7));
+    EXPECT_TRUE(some.has_value());
+    EXPECT_EQ(some.get_value().x, 7);
+
+    Option<Tracked> none = Option<Tracked>::None();
+    EXPECT_FALSE(none.has_value());
+}
+
+TEST(OptionTest, ManagesLifetime) {
+    EXPECT_EQ(Tracked::live, 0);
+    {
+        Option<Tracked> none = Option<Tracked>::None();
+        EXPECT_EQ(Tracked::live, 0);
+
+        Option<Tracked> some = Option<Tracked>::Some(Tracked(1));
+        EXPECT_EQ(some.get_value().x, 1);
+
+        Option<Tracked> copy = some;
+        EXPECT_EQ(copy.get_value().x, 1);
+
+        Option<Tracked> moved = std::move(some);
+        EXPECT_EQ(moved.get_value().x, 1);
+
+        none = copy;
+        EXPECT_TRUE(none.has_value());
+    }
+    EXPECT_EQ(Tracked::live, 0);
 }
 
 TEST(OptionTest, TryGetArraySequence) {

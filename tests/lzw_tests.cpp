@@ -1,250 +1,158 @@
-#include "compression/lzw.h"
-#include "compression/lzw_stream.h"
+#include "compression/lzw_output_stream.h"
+#include "compression/lzw_input_stream.h"
+#include "compression/lzw_file.h"
 #include "streams/sequence_read_stream.h"
 #include "streams/sequence_write_stream.h"
+#include "streams/binary_file_write_stream.h"
+#include "streams/binary_file_read_stream.h"
 #include "core/sequence.h"
 #include <gtest/gtest.h>
 #include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <string>
 
-MutableArraySequence<uint8_t>* make_bytes(const char* str) {
-    auto* seq = new MutableArraySequence<uint8_t>();
-    for (int idx = 0; str[idx] != '\0'; idx++) {
-        seq->append(static_cast<uint8_t>(str[idx]));
-    }
-    return seq;
-}
-
-bool sequences_equal(const MutableArraySequence<uint8_t>* a, const MutableArraySequence<uint8_t>* b) {
-    if (a->get_count() != b->get_count()) return false;
-
-    for (int idx = 0; idx < a->get_count(); idx++) {
-        if (a->get(idx) != b->get(idx)) return false;
+namespace {
+    // Сжимает data в .Z
+    void compress_mem(const uint8_t* data, int count, MutableArraySequence<uint8_t>& out) {
+        SequenceWriteStream<uint8_t> backing(&out);
+        LzwOutputStream compressor(&backing);
+        compressor.open();
+        for (int index = 0; index < count; index++) compressor.write(data[index]);
+        compressor.close();
     }
 
-    return true;
-}
-
-TEST(LzwTest, EmptyInput) {
-    MutableArraySequence<uint8_t> empty;
-    auto* compressed = lzw_compress(&empty);
-    EXPECT_EQ(compressed->get_count(), 0);
-
-    auto* decompressed = lzw_decompress(compressed);
-    EXPECT_EQ(decompressed->get_count(), 0);
-
-    delete compressed;
-    delete decompressed;
-}
-
-TEST(LzwTest, SingleByte) {
-    auto* input = make_bytes("A");
-    auto* compressed = lzw_compress(input);
-    EXPECT_EQ(compressed->get_count(), 1);
-    EXPECT_EQ(compressed->get(0), static_cast<uint16_t>('A'));
-
-    auto* decompressed = lzw_decompress(compressed);
-    EXPECT_TRUE(sequences_equal(input, decompressed));
-
-    delete input;
-    delete compressed;
-    delete decompressed;
-}
-
-TEST(LzwTest, AllSameBytes) {
-    auto* input = make_bytes("AAAAAAA");
-    auto* compressed = lzw_compress(input);
-
-    EXPECT_LT(compressed->get_count(), input->get_count());
-
-    auto* decompressed = lzw_decompress(compressed);
-    EXPECT_TRUE(sequences_equal(input, decompressed));
-
-    delete input;
-    delete compressed;
-    delete decompressed;
-}
-
-TEST(LzwTest, SimplePattern) {
-    auto* input = make_bytes("ABABABAB");
-    auto* compressed = lzw_compress(input);
-
-    auto* decompressed = lzw_decompress(compressed);
-    EXPECT_TRUE(sequences_equal(input, decompressed));
-
-    delete input;
-    delete compressed;
-    delete decompressed;
-}
-
-TEST(LzwTest, RoundTrip_Text) {
-    auto* input = make_bytes("The quick brown fox jumps over the lazy dog. " "The quick brown fox jumps over the lazy dog.");
-    auto* compressed = lzw_compress(input);
-    auto* decompressed = lzw_decompress(compressed);
-
-    EXPECT_TRUE(sequences_equal(input, decompressed));
-
-    delete input;
-    delete compressed;
-    delete decompressed;
-}
-
-TEST(LzwTest, RoundTrip_Binary) {
-    auto* input = new MutableArraySequence<uint8_t>();
-    for (int i = 0; i < 256; i++) {
-        input->append(static_cast<uint8_t>(i));
+    // Разжимает .Z обратно
+    void decompress_mem(const MutableArraySequence<uint8_t>& z, MutableArraySequence<uint8_t>& out) {
+        SequenceReadStream<uint8_t> backing(&z);
+        LzwInputStream decompressor(&backing);
+        decompressor.open();
+        while (!decompressor.is_end_of_stream()) out.append(decompressor.read());
+        decompressor.close();
     }
 
-    auto* compressed = lzw_compress(input);
-    auto* decompressed = lzw_decompress(compressed);
+    // Полный цикл
+    void check_roundtrip(const uint8_t* data, int count) {
+        MutableArraySequence<uint8_t> compressed;
+        compress_mem(data, count, compressed);
 
-    EXPECT_TRUE(sequences_equal(input, decompressed));
+        MutableArraySequence<uint8_t> restored;
+        decompress_mem(compressed, restored);
 
-    delete input;
-    delete compressed;
-    delete decompressed;
-}
-
-TEST(LzwTest, RoundTrip_Large) {
-    auto* input = new MutableArraySequence<uint8_t>();
-    uint32_t state = 12345;
-    for (int i = 0; i < 10000; i++) {
-        state = state * 1103515245 + 12345;
-        input->append(static_cast<uint8_t>((state >> 16) & 0xFF));
+        ASSERT_EQ(restored.get_count(), count);
+        for (int index = 0; index < count; index++) {
+            ASSERT_EQ(restored.get(index), data[index]) << "mismatch at index=" << index;
+        }
     }
 
-    auto* compressed = lzw_compress(input);
-    auto* decompressed = lzw_decompress(compressed);
-
-    EXPECT_TRUE(sequences_equal(input, decompressed));
-
-    delete input;
-    delete compressed;
-    delete decompressed;
-}
-
-TEST(LzwTest, CompressesWell) {
-    auto* input = new MutableArraySequence<uint8_t>();
-    for (int i = 0; i < 1000; i++) {
-        input->append(static_cast<uint8_t>('A' + (i % 4)));
+    void write_bytes_file(const std::string& path, const uint8_t* data, int count) {
+        BinaryFileWriteStream<uint8_t> writer(path);
+        writer.open();
+        for (int index = 0; index < count; index++) writer.write(data[index]);
+        writer.close();
     }
 
-    auto* compressed = lzw_compress(input);
-
-    EXPECT_LT(compressed->get_count(), static_cast<int>(input->get_count() / 2));
-
-    auto* decompressed = lzw_decompress(compressed);
-    EXPECT_TRUE(sequences_equal(input, decompressed));
-
-    delete input;
-    delete compressed;
-    delete decompressed;
-}
-
-// =================== LzwStream ===================
-
-TEST(LzwStreamTest, WriteAndReadBack) {
-    MutableArraySequence<uint16_t> code_buffer;
-    SequenceWriteStream<uint16_t> backing_out(&code_buffer);
-    LzwOutputStream out(&backing_out);
-
-    out.open();
-    const char* text = "Hello, LZW compression!";
-    for (int i = 0; text[i] != '\0'; i++) {
-        out.write(static_cast<uint8_t>(text[i]));
+    void read_bytes_file(const std::string& path, MutableArraySequence<uint8_t>& out) {
+        BinaryFileReadStream<uint8_t> reader(path);
+        reader.open();
+        while (!reader.is_end_of_stream()) out.append(reader.read());
+        reader.close();
     }
-    out.close();
+}
 
-    EXPECT_GT(code_buffer.get_count(), 0);
+TEST(LzwTest, RoundTripEmpty) {
+    check_roundtrip(nullptr, 0);
+}
 
-    SequenceReadStream<uint16_t> backing_in(&code_buffer);
-    LzwInputStream in(&backing_in);
-    in.open();
+TEST(LzwTest, RoundTripSingleByte) {
+    uint8_t data[] = {0x41};
+    check_roundtrip(data, 1);
+}
 
-    std::string result;
-    while (!in.is_end_of_stream()) {
-        result += static_cast<char>(in.read());
+TEST(LzwTest, RoundTripSmall) {
+    const char* text = "TOBEORNOTTOBEORTOBEORNOT";
+    check_roundtrip(reinterpret_cast<const uint8_t*>(text), static_cast<int>(std::strlen(text)));
+}
+
+TEST(LzwTest, RoundTripRepetitive) {
+    MutableArraySequence<uint8_t> data;
+    for (int index = 0; index < 4000; index++) data.append(static_cast<uint8_t>('A' + (index % 4)));
+
+    uint8_t* raw = new uint8_t[data.get_count()];
+    for (int index = 0; index < data.get_count(); index++) {
+        raw[index] = data.get(index);
     }
-    in.close();
 
-    EXPECT_EQ(result, "Hello, LZW compression!");
+    check_roundtrip(raw, data.get_count());
+
+    delete[] raw;
 }
 
-TEST(LzwStreamTest, EmptyStream) {
-    MutableArraySequence<uint16_t> code_buffer;
-    SequenceWriteStream<uint16_t> backing_out(&code_buffer);
-    LzwOutputStream out(&backing_out);
-
-    out.open();
-    out.close();
-
-    SequenceReadStream<uint16_t> backing_in(&code_buffer);
-    LzwInputStream in(&backing_in);
-    in.open();
-
-    EXPECT_TRUE(in.is_end_of_stream());
-    EXPECT_THROW(in.read(), EndOfStream);
-    in.close();
-}
-
-TEST(LzwStreamTest, SingleByte) {
-    MutableArraySequence<uint16_t> code_buffer;
-    SequenceWriteStream<uint16_t> backing_out(&code_buffer);
-    LzwOutputStream out(&backing_out);
-
-    out.open();
-    out.write(65);
-    out.close();
-
-    SequenceReadStream<uint16_t> backing_in(&code_buffer);
-    LzwInputStream in(&backing_in);
-    in.open();
-
-    EXPECT_FALSE(in.is_end_of_stream());
-    EXPECT_EQ(in.read(), 65);
-    EXPECT_TRUE(in.is_end_of_stream());
-    in.close();
-}
-
-TEST(LzwStreamTest, LargeData) {
-    MutableArraySequence<uint16_t> code_buffer;
-    SequenceWriteStream<uint16_t> backing_out(&code_buffer);
-    LzwOutputStream out(&backing_out);
-
-    out.open();
-    uint32_t state = 42;
-    MutableArraySequence<uint8_t> original;
-    for (int i = 0; i < 5000; i++) {
-        state = state * 1103515245 + 12345;
-        uint8_t byte = static_cast<uint8_t>((state >> 16) & 0xFF);
-        out.write(byte);
-        original.append(byte);
+TEST(LzwTest, RoundTripLargeRandom) {
+    const int count = 70000;
+    uint8_t* raw = new uint8_t[count];
+    uint32_t state = 2463534242u;
+    for (int index = 0; index < count; index++) {
+        state ^= state << 13; state ^= state >> 17; state ^= state << 5;
+        raw[index] = static_cast<uint8_t>(state & 0xFF);
     }
-    out.close();
+    check_roundtrip(raw, count);
+    delete[] raw;
+}
 
-    SequenceReadStream<uint16_t> backing_in(&code_buffer);
-    LzwInputStream in(&backing_in);
-    in.open();
+TEST(LzwTest, RoundTripAllBytes) {
+    uint8_t data[256];
+    for (int index = 0; index < 256; index++) data[index] = static_cast<uint8_t>(index);
+    check_roundtrip(data, 256);
+}
 
-    for (int i = 0; i < original.get_count(); i++) {
-        ASSERT_FALSE(in.is_end_of_stream()) << "EOS at i=" << i;
-        EXPECT_EQ(in.read(), original.get(i)) << "Mismatch at i=" << i;
+TEST(LzwTest, HeaderBytes) {
+    uint8_t data[] = {0x41, 0x42, 0x43};
+    MutableArraySequence<uint8_t> compressed;
+    compress_mem(data, 3, compressed);
+
+    ASSERT_GE(compressed.get_count(), 3);
+    EXPECT_EQ(compressed.get(0), 0x1F);
+    EXPECT_EQ(compressed.get(1), 0x9D);
+    EXPECT_EQ(compressed.get(2), 0x90);
+}
+
+TEST(LzwTest, ExactVectorAAAAA) {
+    uint8_t data[] = {0x41, 0x41, 0x41, 0x41, 0x41};
+    MutableArraySequence<uint8_t> compressed;
+    compress_mem(data, 5, compressed);
+
+    const uint8_t expected[] = {0x1F, 0x9D, 0x90, 0x41, 0x02, 0x06, 0x04};
+    ASSERT_EQ(compressed.get_count(), 7);
+    for (int index = 0; index < 7; index++) {
+        EXPECT_EQ(compressed.get(index), expected[index]) << "at byte " << index;
     }
-    EXPECT_TRUE(in.is_end_of_stream());
-    in.close();
 }
 
-TEST(LzwStreamTest, ReadBeforeOpenThrows) {
-    MutableArraySequence<uint16_t> code_buffer;
-    SequenceReadStream<uint16_t> backing(&code_buffer);
-    LzwInputStream in(&backing);
+TEST(LzwTest, FileRoundTrip) {
+    const char* text = "ABABABABABABABABABABA_and_some_more_repeated_text_text_text!!!";
+    int count = static_cast<int>(std::strlen(text));
+    std::string in_path = "lzw_in.bin";
+    std::string z_path = "archive.Z";
+    std::string out_path = "lzw_out.bin";
 
-    EXPECT_THROW(in.read(), StreamNotOpen);
-}
+    write_bytes_file(in_path, reinterpret_cast<const uint8_t*>(text), count);
 
-TEST(LzwStreamTest, WriteBeforeOpenThrows) {
-    MutableArraySequence<uint16_t> code_buffer;
-    SequenceWriteStream<uint16_t> backing(&code_buffer);
-    LzwOutputStream out(&backing);
+    LzwFileStats compressed = lzw_compress_file(in_path, z_path);
+    EXPECT_EQ(compressed.source_bytes, static_cast<size_t>(count));
+    EXPECT_GT(compressed.compressed_bytes, 3u);
 
-    EXPECT_THROW(out.write(42), StreamNotOpen);
+    LzwFileStats decompressed = lzw_decompress_file(z_path, out_path);
+    EXPECT_EQ(decompressed.source_bytes, static_cast<size_t>(count));
+
+    MutableArraySequence<uint8_t> restored;
+    read_bytes_file(out_path, restored);
+    ASSERT_EQ(restored.get_count(), count);
+    for (int index = 0; index < count; index++) {
+        EXPECT_EQ(restored.get(index), static_cast<uint8_t>(text[index])) << "at index=" << index;
+    }
+
+    std::remove(in_path.c_str());
+    std::remove(z_path.c_str());
+    std::remove(out_path.c_str());
 }

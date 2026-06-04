@@ -4,15 +4,16 @@
 #include "gui/memory_visualizer.h"
 #include "gui/lazy_sequence_visualizer.h"
 #include "memory/memory_tape.h"
-#include "memory/alloc_event.h"
+#include "memory/alloc_strategy.h"
 #include "memory/alloc_event_stream.h"
 #include "streams/lazy_read_stream.h"
-#include "streams/sequence_stream.h"
+#include "streams/stream_api.h"
 #include "streams/string_operations.h"
 #include "streams/sequence_read_stream.h"
 #include "streams/sequence_write_stream.h"
-#include "compression/lzw.h"
-#include "compression/lzw_stream.h"
+#include "compression/lzw_output_stream.h"
+#include "compression/lzw_input_stream.h"
+#include "compression/lzw_file.h"
 #include "lazy/lazy_sequence.h"
 #include "lazy/sliding_cache.h"
 #include "core/sequence.h"
@@ -30,8 +31,22 @@ static int g_mem_capacity = 64;
 static int g_mem_alloc_size = 3;
 static int g_mem_manual_free_id = 0;
 static int g_mem_strategy_idx = 0;
-static const char* g_mem_strategies[] = {"First-fit", "Best-fit", "Worst-fit"};
+static const char* g_mem_strategies[] = {"First-fit", "Best-fit", "Worst-fit", "Next-fit"};
 static int g_mem_seed_input = 12345;
+
+static FirstFitStrategy g_first_fit;
+static BestFitStrategy g_best_fit;
+static WorstFitStrategy g_worst_fit;
+static NextFitStrategy g_next_fit;
+
+AllocStrategy& current_strategy() {
+    switch (g_mem_strategy_idx) {
+        case 1: return g_best_fit;
+        case 2: return g_worst_fit;
+        case 3: return g_next_fit;
+        default: return g_first_fit;
+    }
+}
 
 static MemoryTape* g_mem_tape = nullptr;
 static LazySequence<AllocEvent>* g_mem_stream = nullptr;
@@ -65,6 +80,7 @@ void memory_reset() {
     if (g_mem_capacity > 4096) g_mem_capacity = 4096;
 
     g_mem_tape = new MemoryTape(g_mem_capacity);
+    g_next_fit.reset();
     g_mem_stream = make_alloc_event_stream(static_cast<uint64_t>(g_mem_seed_input), 32, 5, 70);
     g_mem_reader = new LazyReadStream<AllocEvent>(g_mem_stream);
     g_mem_reader->open();
@@ -75,7 +91,7 @@ void memory_init_if_needed() {
 }
 
 void memory_apply_event(const AllocEvent& event) {
-    AllocStrategy strategy = static_cast<AllocStrategy>(g_mem_strategy_idx);
+    AllocStrategy& strategy = current_strategy();
 
     if (event.kind == AllocEventKind::Alloc) {
         int new_id = g_mem_tape->alloc(event.payload, strategy);
@@ -132,12 +148,11 @@ void memory_step_from_stream() {
     memory_apply_event(event);
 }
 
-// Доводит ленту до максимально фрагментированного состояния: заливает все ячейки блоками по 1, затем освобождает каждый чётный id
-// Итог - узор [U F U F U F …], и фрагментация стремится к 1, любой alloc с size >= 2 даст -1
 void memory_fragment_chaos() {
     g_mem_tape->reset();
+    g_next_fit.reset();
     int capacity = g_mem_tape->get_capacity();
-    AllocStrategy strategy = static_cast<AllocStrategy>(g_mem_strategy_idx);
+    AllocStrategy& strategy = current_strategy();
 
     for (int index = 0; index < capacity; index++) {
         g_mem_tape->alloc(1, strategy);
@@ -146,7 +161,9 @@ void memory_fragment_chaos() {
     int half_freed = 0;
 
     for (int block_id = 0; block_id < capacity; block_id += 2) {
-        if (g_mem_tape->free(block_id)) half_freed++;
+        if (g_mem_tape->free(block_id)) {
+            half_freed++;
+        }
     }
 
     memory_log("CHAOS: filled %d cells, freed %d alternates", capacity, half_freed);
@@ -161,12 +178,12 @@ void draw_memory_window() {
 
     if (ImGui::InputInt("Capacity", &g_mem_capacity)) need_reset = true;
 
-    ImGui::Combo("Strategy", &g_mem_strategy_idx, g_mem_strategies, 3);
+    if (ImGui::Combo("Strategy", &g_mem_strategy_idx, g_mem_strategies, 4)) g_next_fit.reset();
     ImGui::SliderInt("Alloc size", &g_mem_alloc_size, 1, 16);
     ImGui::InputInt("Free block id", &g_mem_manual_free_id);
     ImGui::InputInt("Seed", &g_mem_seed_input);
 
-    AllocStrategy strategy = static_cast<AllocStrategy>(g_mem_strategy_idx);
+    AllocStrategy& strategy = current_strategy();
 
     if (ImGui::Button("Manual Alloc")) {
         int new_id = g_mem_tape->alloc(g_mem_alloc_size, strategy);
@@ -181,7 +198,9 @@ void draw_memory_window() {
     if (ImGui::Button("Step from Stream")) memory_step_from_stream();
     ImGui::SameLine();
     if (ImGui::Button("Step x10")) {
-        for (int step = 0; step < 10; step++) memory_step_from_stream();
+        for (int step = 0; step < 10; step++) {
+            memory_step_from_stream();
+        }
     }
     ImGui::SameLine();
     if (ImGui::Button("Reset")) need_reset = true;
@@ -191,7 +210,22 @@ void draw_memory_window() {
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(220, 60, 60, 255));
     bool chaos_clicked = ImGui::Button("DO NOT PRESS NEVER");
     ImGui::PopStyleColor(3);
+
     if (chaos_clicked) memory_fragment_chaos();
+
+    // Compact
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(30, 130, 60, 255));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(40, 160, 75, 255));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(60, 190, 90, 255));
+    bool compact_clicked = ImGui::Button("COMPACT");
+    ImGui::PopStyleColor(3);
+    if (compact_clicked) {
+        double before = g_mem_tape->fragmentation() * 100.0;
+        g_mem_tape->compact();
+        g_next_fit.reset(); // позиции блоков изменились - сбрасываем бегущий указатель
+        memory_log("COMPACT: frag %.1f%% -> %.1f%%", before, g_mem_tape->fragmentation() * 100.0);
+    }
 
     if (need_reset) memory_reset();
 
@@ -225,6 +259,8 @@ void draw_memory_window() {
 static LazySequence<int>* g_lazy_seq = nullptr;
 static int g_lazy_source_idx = 0;
 static int g_lazy_get_index = 0;
+static int g_lazy_get_omega = 1;
+static int g_lazy_get_finite = 0;
 static int g_lazy_take_n = 10;
 static int g_lazy_value = 7;
 static int g_lazy_map_choice = 0;
@@ -254,6 +290,7 @@ void lazy_reset(int source_idx) {
 
     if (g_lazy_cache_capacity < 2) g_lazy_cache_capacity = 2;
     if (g_lazy_cache_capacity > 65536) g_lazy_cache_capacity = 65536;
+
     int capacity = g_lazy_cache_capacity;
 
     switch (source_idx) {
@@ -280,7 +317,7 @@ void lazy_reset(int source_idx) {
             g_lazy_seq = new LazySequence<int>(rule, &initial, capacity);
             break;
         }
-        case 2: { // Powers of 2: 1,2,4,8,...
+        case 2: { // Powers of 2
             MutableArraySequence<int> initial;
             initial.append(1);
 
@@ -291,7 +328,7 @@ void lazy_reset(int source_idx) {
             g_lazy_seq = new LazySequence<int>(rule, &initial, capacity);
             break;
         }
-        case 3: { // Finite {1..5}
+        case 3: { // Finite {1, 2, 3, 4, 5}
             MutableArraySequence<int> source;
 
             for (int value = 1; value <= 5; value++) {
@@ -330,7 +367,7 @@ void draw_lazy_window() {
 
     ImGui::Separator();
 
-    // get
+    // get по финитному индексу
     ImGui::SetNextItemWidth(150);
     ImGui::InputInt("##get_i", &g_lazy_get_index);
     ImGui::SameLine();
@@ -340,6 +377,28 @@ void draw_lazy_window() {
             lazy_log("get(%d) = %d", g_lazy_get_index, value);
         } catch (const std::exception& ex) {
             lazy_log("get(%d) threw: %s", g_lazy_get_index, ex.what());
+        }
+    }
+
+    // get по ординальному индексу
+    ImGui::SetNextItemWidth(110);
+    ImGui::InputInt("Infinite part", &g_lazy_get_omega);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(110);
+    ImGui::InputInt("Finite part", &g_lazy_get_finite);
+    ImGui::SameLine();
+    if (ImGui::Button("GetOrd")) {
+        if (g_lazy_get_omega < 0) g_lazy_get_omega = 0;
+        if (g_lazy_get_finite < 0) g_lazy_get_finite = 0;
+
+        Ordinal idx(static_cast<size_t>(g_lazy_get_omega), static_cast<size_t>(g_lazy_get_finite));
+        char ord_buffer[32];
+        print_ordinal(ord_buffer, sizeof(ord_buffer), idx);
+        try {
+            int value = g_lazy_seq->get(idx);
+            lazy_log("getord(%s) = %d", ord_buffer, value);
+        } catch (const std::exception& ex) {
+            lazy_log("getord(%s) threw: %s", ord_buffer, ex.what());
         }
     }
 
@@ -360,12 +419,16 @@ void draw_lazy_window() {
     ImGui::InputInt("##val", &g_lazy_value);
 
     ImGui::SameLine();
-    if (ImGui::Button("Append")) lazy_replace(g_lazy_seq->append(g_lazy_value), "append");
+    if (ImGui::Button("Append")) {
+        lazy_replace(g_lazy_seq->append(g_lazy_value), "append");
+    }
 
     ImGui::SameLine();
-    if (ImGui::Button("Prepend")) lazy_replace(g_lazy_seq->prepend(g_lazy_value), "prepend");
+    if (ImGui::Button("Prepend")) {
+        lazy_replace(g_lazy_seq->prepend(g_lazy_value), "prepend");
+    }
 
-    // concat
+    // concat с финитной {100,200,300}
     if (ImGui::Button("Concat {100,200,300}")) {
         MutableArraySequence<int> right_side;
 
@@ -382,9 +445,28 @@ void draw_lazy_window() {
         delete other;
     }
 
+    // concat с бесконечной
+    ImGui::SameLine();
+    if (ImGui::Button("Concat Naturals (inf)")) {
+        MutableArraySequence<int> initial;
+        initial.append(0);
+
+        std::function<int(Sequence<int>*)> rule = [](Sequence<int>* window) {
+            return window->get_last() + 1;
+        };
+
+        LazySequence<int>* other = new LazySequence<int>(rule, &initial);
+        try {
+            lazy_replace(g_lazy_seq->concat(other), "concat-inf");
+        } catch (const std::exception& ex) {
+            lazy_log("concat-inf threw: %s", ex.what());
+        }
+        delete other;
+    }
+
     // map
     ImGui::SetNextItemWidth(150);
-    ImGui::Combo("Map fn", &g_lazy_map_choice, g_lazy_map_names, 3);
+    ImGui::Combo("Map", &g_lazy_map_choice, g_lazy_map_names, 3);
     ImGui::SameLine();
     if (ImGui::Button("Apply Map")) {
         std::function<int(const int&)> function;
@@ -463,7 +545,7 @@ void draw_lazy_window() {
     render_lazy_sequence(*g_lazy_seq);
 
     ImGui::Separator();
-    ImGui::Text("Recent operations (last 20):");
+    ImGui::Text("Recent events (last 20):");
     if (!g_lazy_log.is_empty()) {
         size_t last = g_lazy_log.get_last_index();
         size_t first = g_lazy_log.get_first_index();
@@ -516,79 +598,22 @@ static const char* g_pipeline_filters[] = {"none", "starts_with", "min_length", 
 static const char* g_pipeline_maps[] = {"none", "to_upper", "to_lower", "trim"};
 
 static char g_lzw_input[512] = "ABABABABABABABABABABABABABAB";
-static MutableArraySequence<uint16_t> g_lzw_codes; // буфер кодов между compress и decompress
-
-// Логирующий wrapper - пишет в backing и логирует каждый emit.
-// Используется для streaming-демо энкодера, чтобы коды появлялись в логе по мере того как LzwOutputStream их эмитит.
-class LoggingWriteUint16 : public WriteOnlyStream<uint16_t> {
-    private:
-        WriteOnlyStream<uint16_t>* inner;
-    public:
-        LoggingWriteUint16(WriteOnlyStream<uint16_t>* inner) : inner(inner) {}
-
-        void open() override {
-            if (!inner->opened()) inner->open();
-
-            this->is_open = true;
-            this->position = 0;
-        }
-
-        void close() override {
-            inner->close();
-            this->is_open = false;
-            this->position = 0;
-        }
-
-        size_t write(const uint16_t& code) override {
-            lzw_log("  emit code %u", static_cast<unsigned>(code));
-            size_t result = inner->write(code);
-            this->position = result;
-
-            return result;
-        }
-};
-
-// Аналогично для декодера - логирует каждый код, который LzwInputStream
-// потребляет из backing.
-class LoggingReadUint16 : public ReadOnlyStream<uint16_t> {
-    private:
-        ReadOnlyStream<uint16_t>* inner;
-    public:
-        LoggingReadUint16(ReadOnlyStream<uint16_t>* inner) : inner(inner) {}
-
-        void open() override {
-            if (!inner->opened()) inner->open();
-            this->is_open = true;
-            this->position = 0;
-        }
-        void close() override {
-            inner->close();
-            this->is_open = false;
-            this->position = 0;
-        }
-        bool is_end_of_stream() const override { return inner->is_end_of_stream(); }
-        uint16_t read() override {
-            uint16_t code = inner->read();
-            lzw_log("  consume code %u", static_cast<unsigned>(code));
-            this->position++;
-            return code;
-        }
-        bool is_can_seek() const override { return inner->is_can_seek(); }
-        bool is_can_go_back() const override { return inner->is_can_go_back(); }
-        size_t seek(size_t index) override { return inner->seek(index); }
-};
+static MutableArraySequence<uint8_t> g_lzw_bytes;
+static char g_lzw_file_in[260] = "input.txt";      // исходный файл для сжатия
+static char g_lzw_file_comp[260] = "archive.Z";    // сжатый файл (формат .Z)
+static char g_lzw_file_out[260] = "restored.txt";  // файл после разжатия
 
 void run_pipeline() {
     MutableArraySequence<std::string> words;
     std::string current;
-    for (int i = 0; g_pipeline_input[i] != '\0'; i++) {
-        if (g_pipeline_input[i] == ' ') {
+    for (int index = 0; g_pipeline_input[index] != '\0'; index++) {
+        if (g_pipeline_input[index] == ' ') {
             if (!current.empty()) {
                 words.append(current);
                 current.clear();
             }
         } else {
-            current += g_pipeline_input[i];
+            current += g_pipeline_input[index];
         }
     }
     if (!current.empty()) words.append(current);
@@ -600,7 +625,7 @@ void run_pipeline() {
 
     pipeline_log("Pipeline input: %d words", words.get_count());
 
-    auto stream = SequenceStream<std::string>::of(&words);
+    auto stream = StreamAPI<std::string>::of(&words);
 
     // Filter
     if (g_pipeline_filter_idx == 1) {
@@ -652,98 +677,52 @@ void run_pipeline() {
 }
 
 int lzw_input_length() {
-    int n = 0;
-    while (g_lzw_input[n] != '\0') {
-        n++;
+    int length = 0;
+    while (g_lzw_input[length] != '\0') {
+        length++;
     }
-    return n;
+    return length;
 }
 
-void run_lzw_batch_compress() {
+void run_lzw_compress() {
     int input_length = lzw_input_length();
     if (input_length == 0) {
-        lzw_log("Batch compress: empty input");
+        lzw_log(".Z compress: empty input");
         return;
     }
 
-    MutableArraySequence<uint8_t> input_bytes;
-    for (int idx = 0; idx < input_length; idx++) {
-        input_bytes.append(static_cast<uint8_t>(g_lzw_input[idx]));
-    }
-
-    auto* compressed = lzw_compress(&input_bytes);
-    int compressed_size = compressed->get_count() * 2;
-    double ratio = static_cast<double>(compressed_size) / static_cast<double>(input_length) * 100.0;
-
-    lzw_log("Batch compress: %d bytes -> %d codes (%d bytes, %.1f%%)", input_length, compressed->get_count(), compressed_size, ratio);
-
-    for (int idx = 0; idx < compressed->get_count(); idx++) {
-        lzw_log("  code[%d] = %u", idx, static_cast<unsigned>(compressed->get(idx)));
-    }
-
-    g_lzw_codes = MutableArraySequence<uint16_t>();
-    for (int idx = 0; idx < compressed->get_count(); idx++) {
-        g_lzw_codes.append(compressed->get(idx));
-    }
-
-    delete compressed;
-}
-
-void run_lzw_streaming_compress() {
-    int input_length = lzw_input_length();
-    if (input_length == 0) {
-        lzw_log("Streaming compress: empty input");
-
-        return;
-    }
-
-    g_lzw_codes = MutableArraySequence<uint16_t>();
-    SequenceWriteStream<uint16_t> raw_backing(&g_lzw_codes);
-    LoggingWriteUint16 backing(&raw_backing);
+    g_lzw_bytes = MutableArraySequence<uint8_t>();
+    SequenceWriteStream<uint8_t> backing(&g_lzw_bytes);
     LzwOutputStream compressor(&backing);
 
-    lzw_log("Streaming compress: %d bytes", input_length);
     compressor.open();
     for (int idx = 0; idx < input_length; idx++) {
         compressor.write(static_cast<uint8_t>(g_lzw_input[idx]));
     }
     compressor.close();
 
-    int compressed_size = g_lzw_codes.get_count() * 2;
-    double ratio = static_cast<double>(compressed_size) / static_cast<double>(input_length) * 100.0;
-    lzw_log("  total: %d codes (%d bytes, %.1f%%)", g_lzw_codes.get_count(), compressed_size, ratio);
+    int z_size = g_lzw_bytes.get_count();
+    double ratio = static_cast<double>(z_size) / static_cast<double>(input_length) * 100.0;
+    lzw_log(".Z compress: %d bytes -> %d bytes .Z (%.1f%%)", input_length, z_size, ratio);
+
+    int shown = z_size < 8 ? z_size : 8;
+    std::string hex;
+    char tmp[8];
+    for (int byte_index = 0; byte_index < shown; byte_index++) {
+        snprintf(tmp, sizeof(tmp), "%02X ", g_lzw_bytes.get(byte_index));
+        hex += tmp;
+    }
+
+    lzw_log("  bytes: %s%s", hex.c_str(), z_size > shown ? "..." : "");
 }
 
-void run_lzw_batch_decompress() {
-    if (g_lzw_codes.get_count() == 0) {
-        lzw_log("Batch decompress: no codes in buffer (compress first)");
+void run_lzw_decompress() {
+    if (g_lzw_bytes.get_count() == 0) {
+        lzw_log(".Z decompress: no .Z bytes (compress first)");
         return;
     }
 
-    auto* decompressed = lzw_decompress(&g_lzw_codes);
-
-    std::string output;
-    for (int i = 0; i < decompressed->get_count(); i++) {
-        output += static_cast<char>(decompressed->get(i));
-    }
-
-    lzw_log("Batch decompress: %d codes -> %d bytes", g_lzw_codes.get_count(), decompressed->get_count());
-    lzw_log("  output: \"%s\"", output.c_str());
-
-    delete decompressed;
-}
-
-void run_lzw_streaming_decompress() {
-    if (g_lzw_codes.get_count() == 0) {
-        lzw_log("Streaming decompress: no codes in buffer (compress first)");
-
-        return;
-    }
-
-    lzw_log("Streaming decompress: %d codes", g_lzw_codes.get_count());
-
-    SequenceReadStream<uint16_t> raw_backing(&g_lzw_codes);
-    LoggingReadUint16 backing(&raw_backing);
+    SequenceReadStream<uint8_t> backing(&g_lzw_bytes);
     LzwInputStream decompressor(&backing);
 
     decompressor.open();
@@ -753,7 +732,8 @@ void run_lzw_streaming_decompress() {
     }
     decompressor.close();
 
-    lzw_log("  total: %d bytes, output: \"%s\"", static_cast<int>(output.size()), output.c_str());
+    lzw_log(".Z decompress: %d bytes .Z -> %d bytes", g_lzw_bytes.get_count(), static_cast<int>(output.size()));
+    lzw_log("  output: \"%s\"", output.c_str());
 }
 
 void draw_pipeline_window() {
@@ -786,11 +766,12 @@ void draw_pipeline_window() {
     }
 
     ImGui::Separator();
-    ImGui::Text("Pipeline log (last 20):");
+    ImGui::Text("Recent events (last 20):");
     if (!g_pipeline_log.is_empty()) {
         size_t last = g_pipeline_log.get_last_index();
         size_t first = g_pipeline_log.get_first_index();
         size_t shown = std::min<size_t>(20, last - first + 1);
+
         for (size_t i = last - shown + 1; i <= last; i++) {
             ImGui::TextUnformatted(g_pipeline_log.get(i).text);
         }
@@ -800,41 +781,64 @@ void draw_pipeline_window() {
 }
 
 void draw_lzw_window() {
-    ImGui::Begin("LZW Compression");
+    ImGui::Begin("LZW Archiver");
 
-    ImGui::InputText("LZW Input", g_lzw_input, sizeof(g_lzw_input));
-    ImGui::Text("Codes buffer: %d", g_lzw_codes.get_count());
+    ImGui::Text("In-memory:");
+    ImGui::InputText("Input", g_lzw_input, sizeof(g_lzw_input));
+    ImGui::Text("Bytes buffer: %d", g_lzw_bytes.get_count());
 
-    ImGui::Text("Compress:");
-    ImGui::SameLine();
-    if (ImGui::Button("batch")) {
-        try { run_lzw_batch_compress(); }
-        catch (const std::exception& ex) { lzw_log("error: %s", ex.what()); }
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("streaming")) {
-        try { run_lzw_streaming_compress(); }
-        catch (const std::exception& ex) { lzw_log("error: %s", ex.what()); }
+    if (ImGui::Button("Compress")) {
+        try {
+            run_lzw_compress();
+        }
+        catch (const std::exception& ex) {
+            lzw_log("error: %s", ex.what());
+        }
     }
 
-    ImGui::Text("Decompress:");
     ImGui::SameLine();
-    if (ImGui::Button("batch##d")) {
-        try { run_lzw_batch_decompress(); }
-        catch (const std::exception& ex) { lzw_log("error: %s", ex.what()); }
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("streaming##d")) {
-        try { run_lzw_streaming_decompress(); }
-        catch (const std::exception& ex) { lzw_log("error: %s", ex.what()); }
+    if (ImGui::Button("Decompress")) {
+        try {
+            run_lzw_decompress();
+        }
+        catch (const std::exception& ex) {
+            lzw_log("error: %s", ex.what());
+        }
     }
 
     ImGui::Separator();
-    ImGui::Text("LZW log (last 20):");
+    ImGui::Text("Files:");
+    ImGui::InputText("Source", g_lzw_file_in, sizeof(g_lzw_file_in));
+    ImGui::InputText("Archive (.Z format)", g_lzw_file_comp, sizeof(g_lzw_file_comp));
+    ImGui::InputText("Restored", g_lzw_file_out, sizeof(g_lzw_file_out));
+
+    if (ImGui::Button("Compress file")) {
+        try {
+            LzwFileStats stats = lzw_compress_file(g_lzw_file_in, g_lzw_file_comp);
+            double ratio = stats.source_bytes > 0 ? static_cast<double>(stats.compressed_bytes) / static_cast<double>(stats.source_bytes) * 100.0 : 0.0;
+            lzw_log("File compress: %zu bytes -> %zu bytes (%.1f%%)", stats.source_bytes, stats.compressed_bytes, ratio);
+        } catch (const std::exception& ex) {
+            lzw_log("error: %s", ex.what());
+        }
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Decompress file")) {
+        try {
+            LzwFileStats stats = lzw_decompress_file(g_lzw_file_comp, g_lzw_file_out);
+            lzw_log("File decompress: %zu bytes -> %zu bytes", stats.compressed_bytes, stats.source_bytes);
+        } catch (const std::exception& ex) {
+            lzw_log("error: %s", ex.what());
+        }
+    }
+
+    ImGui::Separator();
+    ImGui::Text("Recent events (last 20):");
     if (!g_lzw_log.is_empty()) {
         size_t last = g_lzw_log.get_last_index();
         size_t first = g_lzw_log.get_first_index();
         size_t shown = std::min<size_t>(20, last - first + 1);
+
         for (size_t i = last - shown + 1; i <= last; i++) {
             ImGui::TextUnformatted(g_lzw_log.get(i).text);
         }
