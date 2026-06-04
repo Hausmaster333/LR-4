@@ -69,7 +69,7 @@ class LzwInputStream : public ReadOnlyStream<uint8_t> {
             return static_cast<int>(code);
         }
 
-        // Декодировать один код в стек
+        // Декодировать код
         bool decode_next() {
             if (!first_done) {
                 int first_code = get_code();
