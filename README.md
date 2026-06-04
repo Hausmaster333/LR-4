@@ -88,4 +88,4 @@ mingw32-make lazy_tests ordinal_tests stream_tests memory_tape_tests lzw_tests
 ./lazy_tests && ./ordinal_tests && ./stream_tests && ./memory_tape_tests && ./lzw_tests
 ```
 
-Графика: Dear ImGui (immediate-mode GUI) + GLFW (окно/события) + OpenGL.
+Графика: Dear ImGui (GUI) + GLFW (Создание окна, обработка событий) + OpenGL (Графический движок).
