@@ -34,7 +34,6 @@ static int g_mem_strategy_idx = 0;
 static const char* g_mem_strategies[] = {"First-fit", "Best-fit", "Worst-fit", "Next-fit"};
 static int g_mem_seed_input = 12345;
 
-// Стратегии-объекты. First/Best/Worst stateless, NextFit держит бегущий указатель
 static FirstFitStrategy g_first_fit;
 static BestFitStrategy g_best_fit;
 static WorstFitStrategy g_worst_fit;
@@ -81,7 +80,7 @@ void memory_reset() {
     if (g_mem_capacity > 4096) g_mem_capacity = 4096;
 
     g_mem_tape = new MemoryTape(g_mem_capacity);
-    g_next_fit.reset(); // новая лента - бегущий указатель с нуля
+    g_next_fit.reset();
     g_mem_stream = make_alloc_event_stream(static_cast<uint64_t>(g_mem_seed_input), 32, 5, 70);
     g_mem_reader = new LazyReadStream<AllocEvent>(g_mem_stream);
     g_mem_reader->open();
@@ -149,8 +148,6 @@ void memory_step_from_stream() {
     memory_apply_event(event);
 }
 
-// Доводит ленту до максимально фрагментированного состояния: заливает все ячейки блоками по 1, затем освобождает каждый чётный id
-// Итог - узор [U F U F U F …], и фрагментация стремится к 1, любой alloc с size >= 2 даст -1
 void memory_fragment_chaos() {
     g_mem_tape->reset();
     g_next_fit.reset();
@@ -164,7 +161,9 @@ void memory_fragment_chaos() {
     int half_freed = 0;
 
     for (int block_id = 0; block_id < capacity; block_id += 2) {
-        if (g_mem_tape->free(block_id)) half_freed++;
+        if (g_mem_tape->free(block_id)) {
+            half_freed++;
+        }
     }
 
     memory_log("CHAOS: filled %d cells, freed %d alternates", capacity, half_freed);
@@ -199,7 +198,9 @@ void draw_memory_window() {
     if (ImGui::Button("Step from Stream")) memory_step_from_stream();
     ImGui::SameLine();
     if (ImGui::Button("Step x10")) {
-        for (int step = 0; step < 10; step++) memory_step_from_stream();
+        for (int step = 0; step < 10; step++) {
+            memory_step_from_stream();
+        }
     }
     ImGui::SameLine();
     if (ImGui::Button("Reset")) need_reset = true;
@@ -209,9 +210,10 @@ void draw_memory_window() {
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, IM_COL32(220, 60, 60, 255));
     bool chaos_clicked = ImGui::Button("DO NOT PRESS NEVER");
     ImGui::PopStyleColor(3);
+
     if (chaos_clicked) memory_fragment_chaos();
 
-    // Парная кнопка: максимальное уплотнение (свежие блоки вперёд, свободные в конец)
+    // Compact
     ImGui::SameLine();
     ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(30, 130, 60, 255));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(40, 160, 75, 255));
@@ -257,8 +259,8 @@ void draw_memory_window() {
 static LazySequence<int>* g_lazy_seq = nullptr;
 static int g_lazy_source_idx = 0;
 static int g_lazy_get_index = 0;
-static int g_lazy_get_omega = 1;  // ω-кратность для ординального Get
-static int g_lazy_get_finite = 0; // финитная часть для ординального Get
+static int g_lazy_get_omega = 1;
+static int g_lazy_get_finite = 0;
 static int g_lazy_take_n = 10;
 static int g_lazy_value = 7;
 static int g_lazy_map_choice = 0;
@@ -288,6 +290,7 @@ void lazy_reset(int source_idx) {
 
     if (g_lazy_cache_capacity < 2) g_lazy_cache_capacity = 2;
     if (g_lazy_cache_capacity > 65536) g_lazy_cache_capacity = 65536;
+
     int capacity = g_lazy_cache_capacity;
 
     switch (source_idx) {
@@ -314,7 +317,7 @@ void lazy_reset(int source_idx) {
             g_lazy_seq = new LazySequence<int>(rule, &initial, capacity);
             break;
         }
-        case 2: { // Powers of 2: 1,2,4,8,...
+        case 2: { // Powers of 2
             MutableArraySequence<int> initial;
             initial.append(1);
 
@@ -325,7 +328,7 @@ void lazy_reset(int source_idx) {
             g_lazy_seq = new LazySequence<int>(rule, &initial, capacity);
             break;
         }
-        case 3: { // Finite {1..5}
+        case 3: { // Finite {1, 2, 3, 4, 5}
             MutableArraySequence<int> source;
 
             for (int value = 1; value <= 5; value++) {
@@ -442,8 +445,7 @@ void draw_lazy_window() {
         delete other;
     }
 
-    // concat с бесконечной (натуральные 0,1,2,...): на финитной базе даёт
-    // "хвост + бесконечность", на бесконечной правая часть уходит за w
+    // concat с бесконечной
     ImGui::SameLine();
     if (ImGui::Button("Concat Naturals (inf)")) {
         MutableArraySequence<int> initial;
@@ -596,9 +598,9 @@ static const char* g_pipeline_filters[] = {"none", "starts_with", "min_length", 
 static const char* g_pipeline_maps[] = {"none", "to_upper", "to_lower", "trim"};
 
 static char g_lzw_input[512] = "ABABABABABABABABABABABABABAB";
-static MutableArraySequence<uint8_t> g_lzw_bytes; // байты .Z между compress и decompress
+static MutableArraySequence<uint8_t> g_lzw_bytes;
 static char g_lzw_file_in[260] = "input.txt";      // исходный файл для сжатия
-static char g_lzw_file_comp[260] = "archive.Z";    // сжатый файл (формат .Z, LZC)
+static char g_lzw_file_comp[260] = "archive.Z";    // сжатый файл (формат .Z)
 static char g_lzw_file_out[260] = "restored.txt";  // файл после разжатия
 
 void run_pipeline() {
@@ -682,8 +684,6 @@ int lzw_input_length() {
     return length;
 }
 
-// In-memory демо .Z: гоним байты текста через истинно-потоковый LzwOutputStream
-// поверх sequence-backing. Результат - готовые .Z-байты (с заголовком 1F 9D 90).
 void run_lzw_compress() {
     int input_length = lzw_input_length();
     if (input_length == 0) {
@@ -705,7 +705,6 @@ void run_lzw_compress() {
     double ratio = static_cast<double>(z_size) / static_cast<double>(input_length) * 100.0;
     lzw_log(".Z compress: %d bytes -> %d bytes .Z (%.1f%%)", input_length, z_size, ratio);
 
-    // Покажем заголовок и первые байты потока
     int shown = z_size < 8 ? z_size : 8;
     std::string hex;
     char tmp[8];
