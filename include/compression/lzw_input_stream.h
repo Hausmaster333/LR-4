@@ -34,7 +34,7 @@ class LzwInputStream : public ReadOnlyStream<uint8_t> {
         int size;   // Валидных бит в буфере
 
         // Прочитать код из backing, управляя ростом ширины
-        int getcode() {
+        int get_code() {
             if (clear_flg || offset >= size || free_ent > maxcode) {
                 if (free_ent > maxcode) {
                     n_bits++;
@@ -72,7 +72,7 @@ class LzwInputStream : public ReadOnlyStream<uint8_t> {
         // Декодировать один код в стек
         bool decode_next() {
             if (!first_done) {
-                int first_code = getcode();
+                int first_code = get_code();
                 if (first_code == -1) return false;
                 first_done = true;
                 finchar = static_cast<uint8_t>(first_code);
@@ -81,13 +81,13 @@ class LzwInputStream : public ReadOnlyStream<uint8_t> {
                 return true;
             }
 
-            int code = getcode();
+            int code = get_code();
             if (code == -1) return false;
 
             if (code == LZW_CLEAR && block_mode) {
                 clear_flg = 1;
                 free_ent = LZW_FIRST - 1;
-                code = getcode();
+                code = get_code();
 
                 if (code == -1) return false;
             }
