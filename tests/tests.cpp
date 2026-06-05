@@ -702,18 +702,16 @@ TEST(OptionTest, None) {
     EXPECT_THROW(opt.get_value(), std::runtime_error);
 }
 
-namespace {
-    // Тип без конструктора по умолчанию
-    struct Tracked {
-        static int live;
-        int x;
-        Tracked(int v) : x(v) { live++; }
-        Tracked(const Tracked& o) : x(o.x) { live++; }
-        Tracked(Tracked&& o) noexcept : x(o.x) { live++; }
-        ~Tracked() { live--; }
-    };
-    int Tracked::live = 0;
-}
+// Тип без конструктора по умолчанию
+struct Tracked {
+    static int live;
+    int x;
+    Tracked(int v) : x(v) { live++; }
+    Tracked(const Tracked& o) : x(o.x) { live++; }
+    Tracked(Tracked&& o) noexcept : x(o.x) { live++; }
+    ~Tracked() { live--; }
+};
+int Tracked::live = 0;
 
 TEST(OptionTest, NonDefaultConstructible) {
     Option<Tracked> some = Option<Tracked>::Some(Tracked(7));
@@ -726,22 +724,22 @@ TEST(OptionTest, NonDefaultConstructible) {
 
 TEST(OptionTest, ManagesLifetime) {
     EXPECT_EQ(Tracked::live, 0);
-    {
-        Option<Tracked> none = Option<Tracked>::None();
-        EXPECT_EQ(Tracked::live, 0);
+{
+    Option<Tracked> none = Option<Tracked>::None();
+    EXPECT_EQ(Tracked::live, 0);
 
-        Option<Tracked> some = Option<Tracked>::Some(Tracked(1));
-        EXPECT_EQ(some.get_value().x, 1);
+    Option<Tracked> some = Option<Tracked>::Some(Tracked(1));
+    EXPECT_EQ(some.get_value().x, 1);
 
-        Option<Tracked> copy = some;
-        EXPECT_EQ(copy.get_value().x, 1);
+    Option<Tracked> copy = some;
+    EXPECT_EQ(copy.get_value().x, 1);
 
-        Option<Tracked> moved = std::move(some);
-        EXPECT_EQ(moved.get_value().x, 1);
+    Option<Tracked> moved = std::move(some);
+    EXPECT_EQ(moved.get_value().x, 1);
 
-        none = copy;
-        EXPECT_TRUE(none.has_value());
-    }
+    none = copy;
+    EXPECT_TRUE(none.has_value());
+}
     EXPECT_EQ(Tracked::live, 0);
 }
 
