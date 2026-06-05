@@ -60,7 +60,7 @@ class Ordinal {
                 return Ordinal(omega_count - other.omega_count, finite_part);
             }
 
-            throw std::logic_error("Ordinal subtraction: omega underflow");
+            throw std::logic_error("Omega underflow");
         }
 
         bool operator<(const Ordinal& other) const {

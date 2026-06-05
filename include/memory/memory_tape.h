@@ -23,7 +23,7 @@ class MemoryTape {
         void invalidate_frag() { frag_cached = false; }
 
         static int validated_capacity(int capacity) {
-            if (capacity <= 0) throw std::invalid_argument("MemoryTape: capacity must be > 0");
+            if (capacity <= 0) throw std::invalid_argument("Capacity must be > 0");
 
             return capacity;
         }

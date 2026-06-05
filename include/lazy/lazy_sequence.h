@@ -16,9 +16,9 @@ class LazySequence : public Sequence<T> {
     private:
         // mutable - материализация в const методах меняет внутреннее состояние
         mutable Generator<T>* generator;
-        mutable size_t gen_pos;         // сколько уже выдано генератором
-        mutable Ordinal length;         // полная длина
-        mutable SlidingCache<T> cache;  // окно последних материализованных значений
+        mutable size_t gen_pos; // Сколько уже выдано генератором
+        mutable Ordinal length; // Полная длина
+        mutable SlidingCache<T> cache; // Окно последних материализованных значений
 
         void materialize_up_to(size_t target_index) const;
 
@@ -32,9 +32,6 @@ class LazySequence : public Sequence<T> {
         LazySequence(const T* items, int count, int cache_capacity = DEFAULT_CACHE_CAPACITY);
         LazySequence(const Sequence<T>* source, int cache_capacity = DEFAULT_CACHE_CAPACITY);
         LazySequence(std::function<T(Sequence<T>*)> rule, const Sequence<T>* initial, int cache_capacity = DEFAULT_CACHE_CAPACITY);
-
-        // Конструктор из готового generator-а с заявленной длиной. Используется derive-операциями
-        // и фабриками кастомных стримов (например, make_alloc_event_stream).
         LazySequence(Generator<T>* generator, Ordinal length, int cache_capacity = DEFAULT_CACHE_CAPACITY);
 
         LazySequence(const LazySequence& other) = delete;
@@ -79,17 +76,14 @@ class LazySequence : public Sequence<T> {
 
         LazySequence<T>* get_sub_sequence(int start, int end);
 
-        LazySequence<T>* take(int n);     // Финитизация первых n элементов в SourceGen.
-        LazySequence<T>* take(Ordinal limit);  // Для omega_part > 0 - просто новый LazySequence с ограниченной длиной
+        LazySequence<T>* take(int n); // Финитизация первых n элементов
+        LazySequence<T>* take(Ordinal limit); // Для omega_part > 0 дает новый LazySequence с ограниченной длиной
 
-        // concat(other): универсальная цепочка ConcatGenerator(this.gen, this.length, other.gen).
-        // Длина = this.length + other.length (ординально). Цепочки concat дают ω·k.
         LazySequence<T>* concat(LazySequence<T>* other);
 
         template <class U>
         LazySequence<U>* map(std::function<U(const T&)> func);
 
-        // where(pred): реальное длина известно только при материализации.
         LazySequence<T>* where(std::function<bool(const T&)> pred);
 
         template <class U, class R>
@@ -122,7 +116,7 @@ class LazySequence : public Sequence<T> {
 
                 const T& get_current() const override {
                     if (!has_current) {
-                        throw std::logic_error("LazySequence::Enumerator: no current value (call move_next first)");
+                        throw std::logic_error("No current value (call move_next first)");
                     }
                     return current;
                 }

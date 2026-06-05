@@ -12,64 +12,62 @@
 #include <cstring>
 #include <string>
 
-namespace {
-    // Сжимает data в .Z
-    void compress_mem(const uint8_t* data, int count, MutableArraySequence<uint8_t>& out) {
-        SequenceWriteStream<uint8_t> backing(&out);
-        LzwOutputStream compressor(&backing);
-        compressor.open();
-        for (int index = 0; index < count; index++) {
-            compressor.write(data[index]);
-        }
-
-        compressor.close();
+// Сжимает data в .Z
+void compress_mem(const uint8_t* data, int count, MutableArraySequence<uint8_t>& out) {
+    SequenceWriteStream<uint8_t> backing(&out);
+    LzwOutputStream compressor(&backing);
+    compressor.open();
+    for (int index = 0; index < count; index++) {
+        compressor.write(data[index]);
     }
 
-    // Разжимает .Z обратно
-    void decompress_mem(const MutableArraySequence<uint8_t>& z, MutableArraySequence<uint8_t>& out) {
-        SequenceReadStream<uint8_t> backing(&z);
-        LzwInputStream decompressor(&backing);
-        decompressor.open();
-        while (!decompressor.is_end_of_stream()) {
-            out.append(decompressor.read());
-        }
+    compressor.close();
+}
 
-        decompressor.close();
+// Разжимает .Z обратно
+void decompress_mem(const MutableArraySequence<uint8_t>& z, MutableArraySequence<uint8_t>& out) {
+    SequenceReadStream<uint8_t> backing(&z);
+    LzwInputStream decompressor(&backing);
+    decompressor.open();
+    while (!decompressor.is_end_of_stream()) {
+        out.append(decompressor.read());
     }
 
-    // Полный цикл
-    void check_cycle(const uint8_t* data, int count) {
-        MutableArraySequence<uint8_t> compressed;
-        compress_mem(data, count, compressed);
+    decompressor.close();
+}
 
-        MutableArraySequence<uint8_t> restored;
-        decompress_mem(compressed, restored);
+// Полный цикл
+void check_cycle(const uint8_t* data, int count) {
+    MutableArraySequence<uint8_t> compressed;
+    compress_mem(data, count, compressed);
 
-        ASSERT_EQ(restored.get_count(), count);
-        for (int index = 0; index < count; index++) {
-            ASSERT_EQ(restored.get(index), data[index]) << "mismatch at index=" << index;
-        }
+    MutableArraySequence<uint8_t> restored;
+    decompress_mem(compressed, restored);
+
+    ASSERT_EQ(restored.get_count(), count);
+    for (int index = 0; index < count; index++) {
+        ASSERT_EQ(restored.get(index), data[index]) << "mismatch at index=" << index;
+    }
+}
+
+void write_bytes_file(const std::string& path, const uint8_t* data, int count) {
+    BinaryFileWriteStream<uint8_t> writer(path);
+    writer.open();
+    for (int index = 0; index < count; index++) {
+        writer.write(data[index]);
     }
 
-    void write_bytes_file(const std::string& path, const uint8_t* data, int count) {
-        BinaryFileWriteStream<uint8_t> writer(path);
-        writer.open();
-        for (int index = 0; index < count; index++) {
-            writer.write(data[index]);
-        }
+    writer.close();
+}
 
-        writer.close();
+void read_bytes_file(const std::string& path, MutableArraySequence<uint8_t>& out) {
+    BinaryFileReadStream<uint8_t> reader(path);
+    reader.open();
+    while (!reader.is_end_of_stream()) {
+        out.append(reader.read());
     }
 
-    void read_bytes_file(const std::string& path, MutableArraySequence<uint8_t>& out) {
-        BinaryFileReadStream<uint8_t> reader(path);
-        reader.open();
-        while (!reader.is_end_of_stream()) {
-            out.append(reader.read());
-        }
-
-        reader.close();
-    }
+    reader.close();
 }
 
 TEST(LzwTest, RoundTripEmpty) {

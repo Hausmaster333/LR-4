@@ -390,7 +390,7 @@ LazySequence<T>* LazySequence<T>::insert_at(LazySequence<T>* other, Ordinal posi
 
 template <class T>
 LazySequence<T>* LazySequence<T>::concat(LazySequence<T>* other) {
-    if (other == nullptr) throw std::invalid_argument("concat: other is nullptr");
+    if (other == nullptr) throw std::invalid_argument("Other is nullptr");
 
     if (other->generator == nullptr) {
         Generator<T>* this_clone = (generator != nullptr) ? generator->clone() : nullptr;

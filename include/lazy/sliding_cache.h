@@ -11,8 +11,8 @@ class SlidingCache {
         int capacity;
         int count;
         int first_physical_index; // Физический индекс в buffer, отвечающий за first_logical_index
-        size_t first_logical_index; // Лог. индекс начального элемента в окне
-        size_t last_logical_index; // Лог. индекс последнего элемента в окне
+        size_t first_logical_index; // Логический индекс начального элемента в окне
+        size_t last_logical_index; // Логический индекс последнего элемента в окне
     public:
         SlidingCache(int capacity);
 

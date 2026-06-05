@@ -5,7 +5,7 @@
 
 template <class T>
 SlidingCache<T>::SlidingCache(int capacity) : buffer(capacity), capacity(capacity), count(0), first_physical_index(0), first_logical_index(0), last_logical_index(0) {
-    if (capacity < 1) throw std::invalid_argument("SlidingCache: capacity must be >= 1");
+    if (capacity < 1) throw std::invalid_argument("Capacity must be >= 1");
 }
 
 template <class T>
@@ -25,14 +25,14 @@ int SlidingCache<T>::get_capacity() const {
 
 template <class T>
 size_t SlidingCache<T>::get_first_index() const {
-    if (count == 0) throw std::logic_error("SlidingCache::get_first_index() on empty cache");
+    if (count == 0) throw std::logic_error("Cache is empty");
 
     return first_logical_index;
 }
 
 template <class T>
 size_t SlidingCache<T>::get_last_index() const {
-    if (count == 0) throw std::logic_error("SlidingCache::get_last_index() on empty cache");
+    if (count == 0) throw std::logic_error("Cache is empty");
 
     return last_logical_index;
 }
@@ -46,7 +46,7 @@ bool SlidingCache<T>::contains(size_t logical_index) const {
 
 template <class T>
 const T& SlidingCache<T>::get(size_t logical_index) const {
-    if (!contains(logical_index)) throw std::out_of_range("SlidingCache::get: index not in window");
+    if (!contains(logical_index)) throw std::out_of_range("Index not in window");
 
     size_t offset = logical_index - first_logical_index;
     int physical_index = (first_physical_index + static_cast<int>(offset)) % capacity;

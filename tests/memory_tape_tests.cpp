@@ -71,18 +71,16 @@ TEST(MemoryTapeBasicTest, ResetEmptiesTape) {
     EXPECT_EQ(t.alloc(1, first_fit), 0);
 }
 
-namespace {
-    MemoryTape make_layout() {
-        MemoryTape t(10);
-        t.alloc(2, first_fit);   // [0-1] id=0
-        t.alloc(2, first_fit);   // [2-3] id=1
-        t.alloc(4, first_fit);   // [4-7] id=2
-        t.alloc(2, first_fit);   // [8-9] id=3
-        t.free(0);
-        t.free(2);
+MemoryTape make_layout() {
+    MemoryTape t(10);
+    t.alloc(2, first_fit);   // [0-1] id=0
+    t.alloc(2, first_fit);   // [2-3] id=1
+    t.alloc(4, first_fit);   // [4-7] id=2
+    t.alloc(2, first_fit);   // [8-9] id=3
+    t.free(0);
+    t.free(2);
 
-        return t;
-    }
+    return t;
 }
 
 TEST(MemoryTapeStrategyTest, FirstFitTakesEarliest) {
