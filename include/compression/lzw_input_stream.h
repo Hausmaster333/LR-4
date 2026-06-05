@@ -116,7 +116,7 @@ class LzwInputStream : public ReadOnlyStream<uint8_t> {
         LzwInputStream(ReadOnlyStream<uint8_t>* backing) : backing(backing), maxbits(LZW_MAX_BITS), block_mode(true), limitcode(LZW_LIMITCODE),
               tab_prefix(nullptr), tab_suffix(nullptr), stack(nullptr), stack_top(0), n_bits(LZW_INIT_BITS), maxcode(lzw_maxcode(LZW_INIT_BITS)), 
               free_ent(LZW_FIRST), oldcode(-1), finchar(0), clear_flg(0), first_done(false), offset(0), size(0) {
-            if (backing == nullptr) throw std::invalid_argument("LzwInputStream: backing is nullptr");
+            if (backing == nullptr) throw std::invalid_argument("Backing is nullptr");
 
             std::memset(buf, 0, sizeof(buf));
         }
